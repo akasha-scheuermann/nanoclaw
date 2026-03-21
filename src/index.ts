@@ -200,7 +200,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       setTyping: (typing) =>
         channel.setTyping?.(chatJid, typing) ?? Promise.resolve(),
       runAgent: (prompt, onOutput) =>
-        runAgent(group, prompt, chatJid, onOutput),
+        runAgent(group, prompt, chatJid, [], onOutput),
       closeStdin: () => queue.closeStdin(chatJid),
       advanceCursor: (ts) => {
         lastAgentTimestamp[chatJid] = ts;
@@ -255,8 +255,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   const imageAttachments = parseImageReferences(missedMessages);
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
-  // these messages. Save the old cursor so we can roll back on error.
+  // these messages. Save the old cursor so we can roll back on error or crash.
   const previousCursor = lastAgentTimestamp[chatJid] || '';
+  cursorBeforePipe[chatJid] = previousCursor;
   lastAgentTimestamp[chatJid] =
     missedMessages[missedMessages.length - 1].timestamp;
   saveState();
@@ -316,6 +317,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
       if (result.status === 'success') {
         statusTracker.markAllDone(chatJid);
+        // Clear pipe rollback cursor now that output was delivered.
+        // Don't wait for processGroupMessages to return — if the process
+        // dies between here and the return, we'd wrongly roll back.
+        delete cursorBeforePipe[chatJid];
+        saveState();
         queue.notifyIdle(chatJid);
       }
 
@@ -674,6 +680,11 @@ async function main(): Promise<void> {
     logger.info({ signal }, 'Shutdown signal received');
     proxyServer.close();
     await queue.shutdown(10000);
+    // Clear piped-message rollback cursors on clean shutdown.
+    // Containers are detached (not killed), so their work is done or abandoned.
+    // Without this, recovery rolls back cursors and re-processes handled messages.
+    cursorBeforePipe = {};
+    saveState();
     for (const ch of channels) await ch.disconnect();
     await statusTracker.shutdown();
     process.exit(0);

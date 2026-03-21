@@ -55,6 +55,10 @@ export class GroupQueue {
     return state;
   }
 
+  isActive(groupJid: string): boolean {
+    return this.groups.get(groupJid)?.active ?? false;
+  }
+
   setProcessMessagesFn(fn: (groupJid: string) => Promise<boolean>): void {
     this.processMessagesFn = fn;
   }
@@ -342,10 +346,6 @@ export class GroupQueue {
       }
       // If neither pending, skip this group
     }
-  }
-
-  isActive(groupJid: string): boolean {
-    return this.getGroup(groupJid).active;
   }
 
   async shutdown(_gracePeriodMs: number): Promise<void> {
