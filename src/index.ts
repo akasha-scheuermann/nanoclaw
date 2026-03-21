@@ -466,10 +466,16 @@ function recoverPendingMessages(): void {
   let rolledBack = false;
   for (const [chatJid, savedCursor] of Object.entries(cursorBeforePipe)) {
     if (queue.isActive(chatJid)) {
-      logger.debug({ chatJid }, 'Recovery: skipping piped-cursor rollback, container still active');
+      logger.debug(
+        { chatJid },
+        'Recovery: skipping piped-cursor rollback, container still active',
+      );
       continue;
     }
-    logger.info({ chatJid, rolledBackTo: savedCursor }, 'Recovery: rolling back piped-message cursor');
+    logger.info(
+      { chatJid, rolledBackTo: savedCursor },
+      'Recovery: rolling back piped-message cursor',
+    );
     lastAgentTimestamp[chatJid] = savedCursor;
     delete cursorBeforePipe[chatJid];
     rolledBack = true;
