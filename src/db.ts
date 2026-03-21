@@ -363,25 +363,35 @@ export function getMessagesSince(
     .all(chatJid, sinceTimestamp, `${botPrefix}:%`) as NewMessage[];
 }
 
-export function getMessageFromMe(messageId: string, chatJid: string): boolean {
+export function getMessageFromMe(
+  messageId: string,
+  chatJid: string,
+): { fromMe: boolean; sender: string | null } {
   const row = db
     .prepare(
-      `SELECT is_from_me FROM messages WHERE id = ? AND chat_jid = ? LIMIT 1`,
+      `SELECT is_from_me, sender FROM messages WHERE id = ? AND chat_jid = ? LIMIT 1`,
     )
-    .get(messageId, chatJid) as { is_from_me: number | null } | undefined;
-  return row?.is_from_me === 1;
+    .get(messageId, chatJid) as
+    | { is_from_me: number | null; sender: string | null }
+    | undefined;
+  return {
+    fromMe: row?.is_from_me === 1,
+    sender: row?.sender ?? null,
+  };
 }
 
 export function getLatestMessage(
   chatJid: string,
-): { id: string; fromMe: boolean } | undefined {
+): { id: string; fromMe: boolean; sender: string | null } | undefined {
   const row = db
     .prepare(
-      `SELECT id, is_from_me FROM messages WHERE chat_jid = ? ORDER BY timestamp DESC LIMIT 1`,
+      `SELECT id, is_from_me, sender FROM messages WHERE chat_jid = ? ORDER BY timestamp DESC LIMIT 1`,
     )
-    .get(chatJid) as { id: string; is_from_me: number | null } | undefined;
+    .get(chatJid) as
+    | { id: string; is_from_me: number | null; sender: string | null }
+    | undefined;
   if (!row) return undefined;
-  return { id: row.id, fromMe: row.is_from_me === 1 };
+  return { id: row.id, fromMe: row.is_from_me === 1, sender: row.sender };
 }
 
 export function storeReaction(reaction: Reaction): void {
