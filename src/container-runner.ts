@@ -30,6 +30,10 @@ import { readEnvFile } from './env.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
 
+// In-container MCP server env vars — read from .env and forwarded to containers
+const mcpEnvKeys = ['FASTMAIL_API_TOKEN', 'FASTMAIL_ACCOUNT_ID'] as const;
+const mcpEnvConfig = readEnvFile([...mcpEnvKeys]);
+
 // Sentinel markers for robust output parsing (must match agent-runner)
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
@@ -269,6 +273,14 @@ function buildContainerArgs(
   if (hostUid != null && hostUid !== 0 && hostUid !== 1000) {
     args.push('--user', `${hostUid}:${hostGid}`);
     args.push('-e', 'HOME=/home/node');
+  }
+
+  // Forward in-container MCP server credentials
+  for (const key of mcpEnvKeys) {
+    const value = process.env[key] || mcpEnvConfig[key];
+    if (value) {
+      args.push('-e', `${key}=${value}`);
+    }
   }
 
   for (const mount of mounts) {
