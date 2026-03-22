@@ -1,17 +1,17 @@
 ---
 name: add-plex
-description: Add Plex Media Server integration. Runs as an in-container MCP server — no host-side bridge needed.
+description: Add Plex Media Server integration using plex-mcp-server (Python, via uvx). Runs as an in-container MCP server — no host-side bridge needed.
 ---
 
 # Add Plex Integration
 
-Adds Plex media tools (search, browse, history, sessions, playlists) to all agent containers.
+Adds Plex media tools to all agent containers using the community `plex-mcp-server` PyPI package (via `uvx`).
 
 ## Pre-flight
 
 Check if already applied:
 ```bash
-grep -q 'plex-mcp' container/agent-runner/src/index.ts && echo "ALREADY APPLIED" || echo "NOT APPLIED"
+grep -q 'plex-mcp-server' container/agent-runner/src/index.ts && echo "ALREADY APPLIED" || echo "NOT APPLIED"
 ```
 
 If already applied, tell the user and stop.
@@ -41,14 +41,14 @@ git merge --continue
 3. Add to `.env`:
 ```
 PLEX_TOKEN=your-plex-token
-PLEX_SERVER_URL=http://192.168.1.100:32400
+PLEX_URL=http://192.168.1.100:32400
 ```
 
 ## Phase 3: Build and verify
 
 ```bash
 npm run build
-./container/build.sh
+./container/build.sh    # Rebuilds container with uv for Python MCP servers
 ```
 
 ## Phase 4: Test
@@ -60,7 +60,11 @@ Restart NanoClaw and test from any agent:
 
 ## What This Adds
 
-- **In-container MCP server** (`plex-mcp.ts`) with Plex REST API tools
-- **Tools**: `library_list`, `library_get_contents`, `media_search`, `media_get_details`, `library_get_recently_added`, `sessions_get_active`, `user_get_watch_history`, `user_get_on_deck`, `playlist_list`, `client_list`
-- **Env var forwarding** in container-runner for `PLEX_TOKEN` and `PLEX_SERVER_URL`
-- **Auto-enabled**: Server starts only when both `PLEX_TOKEN` and `PLEX_SERVER_URL` are set
+- **`uv` in Dockerfile** — Python package runner for MCP servers that use PyPI
+- **MCP server config** in `container/agent-runner/src/index.ts` — spawns `uvx plex-mcp-server --transport stdio` with credentials as CLI args
+- **Env var forwarding** for `PLEX_TOKEN` and `PLEX_URL`
+- **Auto-enabled**: Server starts only when both `PLEX_TOKEN` and `PLEX_URL` are set
+
+### Tools provided by `plex-mcp-server`
+
+Libraries, media search, playback control, sessions, history, playlists, collections, and user management — full Plex API coverage with OAuth 2.1 support.

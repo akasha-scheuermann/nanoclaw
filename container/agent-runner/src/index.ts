@@ -462,17 +462,23 @@ async function runQuery(
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
           },
         },
-        // Plex MCP server — enabled when PLEX_TOKEN is set
-        ...(process.env.PLEX_TOKEN && process.env.PLEX_SERVER_URL ? {
-          plex: {
-            command: 'node',
-            args: [path.join(__dirname, 'plex-mcp.js')],
-            env: {
-              PLEX_TOKEN: process.env.PLEX_TOKEN,
-              PLEX_SERVER_URL: process.env.PLEX_SERVER_URL,
-            },
-          },
-        } : {}),
+        // Plex MCP server (uvx) — enabled when PLEX_TOKEN and PLEX_URL are set
+        ...(process.env.PLEX_TOKEN && process.env.PLEX_URL
+          ? {
+              plex: {
+                command: 'uvx',
+                args: [
+                  'plex-mcp-server',
+                  '--transport',
+                  'stdio',
+                  '--plex-url',
+                  process.env.PLEX_URL,
+                  '--plex-token',
+                  process.env.PLEX_TOKEN,
+                ],
+              },
+            }
+          : {}),
       },
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
