@@ -488,29 +488,31 @@ server.tool(
   },
 );
 
-server.tool(
-  'restart_nanoclaw',
-  'Restart the NanoClaw host process. Use when the system is misbehaving, after config changes, or when asked to restart. Launchd/systemd will automatically restart the process after exit.',
-  {},
-  async () => {
-    const data = {
-      type: 'restart_nanoclaw',
-      groupFolder,
-      timestamp: new Date().toISOString(),
-    };
+if (isMain) {
+  server.tool(
+    'restart_nanoclaw',
+    'Restart the NanoClaw host process. Use when the system is misbehaving, after config changes, or when asked to restart. Launchd/systemd will automatically restart the process after exit.',
+    {},
+    async () => {
+      const data = {
+        type: 'restart_nanoclaw',
+        groupFolder,
+        timestamp: new Date().toISOString(),
+      };
 
-    writeIpcFile(TASKS_DIR, data);
+      writeIpcFile(TASKS_DIR, data);
 
-    return {
-      content: [
-        {
-          type: 'text' as const,
-          text: 'NanoClaw restart requested. The process will exit and be restarted by the service manager.',
-        },
-      ],
-    };
-  },
-);
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: 'NanoClaw restart requested. The process will exit and be restarted by the service manager.',
+          },
+        ],
+      };
+    },
+  );
+}
 
 // --- MCP Bridge: dynamically discover and proxy host-side MCP tools ---
 
