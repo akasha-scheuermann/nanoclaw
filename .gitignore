@@ -30,3 +30,5 @@ groups/
 .nanoclaw/
 
 agents-sdk-docs
+
+.claude/settings.json
