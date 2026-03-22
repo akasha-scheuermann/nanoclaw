@@ -163,6 +163,26 @@ function buildVolumeMounts(
       fs.cpSync(srcDir, dstDir, { recursive: true });
     }
   }
+
+  // Symlink per-group skills from groups/{folder}/skills/ into .claude/skills/
+  // Symlinks use container paths so they resolve inside the container where
+  // /workspace/group/ is mounted. This keeps skills in sync without copying.
+  const groupSkillsSrc = path.join(groupDir, 'skills');
+  if (fs.existsSync(groupSkillsSrc)) {
+    fs.mkdirSync(skillsDst, { recursive: true });
+    for (const skillDir of fs.readdirSync(groupSkillsSrc)) {
+      const srcDir = path.join(groupSkillsSrc, skillDir);
+      if (!fs.statSync(srcDir).isDirectory()) continue;
+      const dstLink = path.join(skillsDst, skillDir);
+      // Remove any existing copy or symlink so per-group takes precedence.
+      // Use force: true because existsSync returns false for broken symlinks
+      // (the target is a container path that doesn't exist on the host).
+      fs.rmSync(dstLink, { recursive: true, force: true });
+      // Symlink to container path — resolves inside the container, not on host
+      fs.symlinkSync(`/workspace/group/skills/${skillDir}`, dstLink);
+    }
+  }
+
   mounts.push({
     hostPath: groupSessionsDir,
     containerPath: '/home/node/.claude',
