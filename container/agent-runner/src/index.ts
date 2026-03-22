@@ -490,8 +490,8 @@ async function runQuery(
         ...(process.env.FASTMAIL_API_TOKEN
           ? {
               fastmail: {
-                command: 'npx',
-                args: ['fastmail-mcp-server'],
+                command: '/app/node_modules/.bin/fastmail-mcp-server',
+                args: [],
                 env: {
                   FASTMAIL_API_TOKEN: process.env.FASTMAIL_API_TOKEN,
                 },
