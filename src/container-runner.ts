@@ -177,6 +177,8 @@ function buildVolumeMounts(
   fs.mkdirSync(path.join(groupIpcDir, 'input'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'mcp_requests'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'mcp_responses'), { recursive: true });
+  fs.mkdirSync(path.join(groupIpcDir, 'agent_requests'), { recursive: true });
+  fs.mkdirSync(path.join(groupIpcDir, 'agent_responses'), { recursive: true });
 
   // Write bridge manifest so containers know to attempt tool discovery
   const bridgeEnv = readEnvFile(['MCP_BRIDGE_SERVERS']);

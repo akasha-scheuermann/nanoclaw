@@ -4,7 +4,7 @@ import path from 'path';
 import { CronExpressionParser } from 'cron-parser';
 
 import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
-import { AvailableGroup } from './container-runner.js';
+import { AvailableGroup, runContainerAgent } from './container-runner.js';
 import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
@@ -236,6 +236,49 @@ export function startIpcWatcher(deps: IpcDeps): void {
             'Error reading MCP requests directory',
           );
         }
+      }
+
+      // Process cross-agent call requests
+      const agentRequestsDir = path.join(
+        ipcBaseDir,
+        sourceGroup,
+        'agent_requests',
+      );
+      const agentResponsesDir = path.join(
+        ipcBaseDir,
+        sourceGroup,
+        'agent_responses',
+      );
+      try {
+        if (fs.existsSync(agentRequestsDir)) {
+          const requestFiles = fs
+            .readdirSync(agentRequestsDir)
+            .filter((f) => f.endsWith('.json'));
+          for (const file of requestFiles) {
+            const filePath = path.join(agentRequestsDir, file);
+            try {
+              const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+              fs.unlinkSync(filePath);
+              processAgentCallRequest(
+                data,
+                agentResponsesDir,
+                sourceGroup,
+                registeredGroups,
+                deps.sendMessage,
+              );
+            } catch (err) {
+              logger.error(
+                { file, error: err },
+                'Failed to process agent call request',
+              );
+            }
+          }
+        }
+      } catch (err) {
+        logger.error(
+          { sourceGroup, error: err },
+          'Failed to scan agent requests',
+        );
       }
     }
 
@@ -629,5 +672,243 @@ async function processMcpRequest(
       },
       'MCP bridge request failed',
     );
+  }
+}
+
+const MAX_CONCURRENT_AGENT_CALLS = 2;
+let activeAgentCalls = 0;
+
+// Restricted groups that cannot be called via cross-agent IPC.
+// Set CROSS_AGENT_RESTRICTED_GROUPS env var to a comma-separated list of group folders.
+// Main groups are always restricted by default.
+function getRestrictedGroups(
+  registeredGroups: Record<string, RegisteredGroup>,
+): Set<string> {
+  const restricted = new Set<string>();
+  // Main groups are always restricted
+  for (const g of Object.values(registeredGroups)) {
+    if (g.isMain) restricted.add(g.folder);
+  }
+  // Additional restrictions from env
+  const envRestricted = process.env.CROSS_AGENT_RESTRICTED_GROUPS;
+  if (envRestricted) {
+    for (const folder of envRestricted.split(',').map((s) => s.trim())) {
+      if (folder) restricted.add(folder);
+    }
+  }
+  return restricted;
+}
+
+async function processAgentCallRequest(
+  data: {
+    requestId: string;
+    targetGroup: string;
+    prompt: string;
+    timeout?: number;
+  },
+  responsesDir: string,
+  sourceGroup: string,
+  registeredGroups: Record<string, RegisteredGroup>,
+  sendMessage: (jid: string, text: string) => Promise<void>,
+): Promise<void> {
+  fs.mkdirSync(responsesDir, { recursive: true });
+
+  const responseFile = path.join(responsesDir, `${data.requestId}.json`);
+  const tempFile = `${responseFile}.tmp`;
+
+  const writeResponse = (result: string | null, error: string | null) => {
+    fs.writeFileSync(
+      tempFile,
+      JSON.stringify({ requestId: data.requestId, result, error }),
+    );
+    fs.renameSync(tempFile, responseFile);
+  };
+
+  // Validate target group exists
+  const targetEntry = Object.entries(registeredGroups).find(
+    ([_, g]) => g.folder === data.targetGroup,
+  );
+  if (!targetEntry) {
+    writeResponse(null, `Target group '${data.targetGroup}' not registered`);
+    return;
+  }
+
+  const [targetJid, targetGroup] = targetEntry;
+
+  // Security: block calls to restricted groups
+  const restricted = getRestrictedGroups(registeredGroups);
+  if (restricted.has(data.targetGroup)) {
+    logger.warn(
+      { sourceGroup, targetGroup: data.targetGroup },
+      'Cross-agent call to restricted group blocked',
+    );
+    writeResponse(null, `Calls to '${data.targetGroup}' are not permitted`);
+    return;
+  }
+
+  // Concurrency guard
+  if (activeAgentCalls >= MAX_CONCURRENT_AGENT_CALLS) {
+    writeResponse(
+      null,
+      `Too many concurrent agent calls (max ${MAX_CONCURRENT_AGENT_CALLS}). Try again later.`,
+    );
+    return;
+  }
+
+  activeAgentCalls++;
+
+  logger.info(
+    {
+      requestId: data.requestId,
+      sourceGroup,
+      targetGroup: data.targetGroup,
+      promptLength: data.prompt.length,
+    },
+    'Processing cross-agent call',
+  );
+
+  // Chat visibility: forward call preview to source group's chat
+  const crossAgentVisibility = process.env.CROSS_AGENT_VISIBILITY !== 'false'; // enabled by default
+  const sourceEntry = Object.entries(registeredGroups).find(
+    ([_, g]) => g.folder === sourceGroup,
+  );
+  const sourceJid = sourceEntry?.[0];
+
+  if (crossAgentVisibility && sourceJid) {
+    const preview =
+      data.prompt.length > 500 ? data.prompt.slice(0, 500) + '…' : data.prompt;
+    sendMessage(
+      sourceJid,
+      `[${sourceGroup}] → @${data.targetGroup}\n\n${preview}`,
+    ).catch((err) =>
+      logger.error({ err, sourceGroup }, 'Failed to forward agent call'),
+    );
+  }
+
+  try {
+    // Track whether we've already written a response (first real result wins)
+    let responseWritten = false;
+
+    const output = await runContainerAgent(
+      { ...targetGroup, folder: data.targetGroup },
+      {
+        prompt: `[Cross-agent call from ${sourceGroup}]\n\n${data.prompt}`,
+        sessionId: undefined, // isolated — no session reuse
+        groupFolder: data.targetGroup,
+        chatJid: targetJid,
+        isMain: targetGroup.isMain === true,
+        isScheduledTask: true,
+      },
+      () => {
+        // No process registration — transient call
+      },
+      async (streamedOutput) => {
+        // Streaming callback: capture the first real result, write response,
+        // then signal container to exit via _close sentinel.
+        if (streamedOutput.result && !responseWritten) {
+          responseWritten = true;
+
+          writeResponse(
+            streamedOutput.status === 'success' ? streamedOutput.result : null,
+            streamedOutput.status === 'error'
+              ? streamedOutput.error || 'Unknown error'
+              : null,
+          );
+
+          logger.info(
+            {
+              requestId: data.requestId,
+              sourceGroup,
+              targetGroup: data.targetGroup,
+              status: streamedOutput.status,
+              resultLength: streamedOutput.result.length,
+            },
+            'Cross-agent call: response written (streaming)',
+          );
+
+          // Forward the response to the source group's chat for visibility
+          if (crossAgentVisibility && sourceJid) {
+            const responsePreview =
+              streamedOutput.result.length > 500
+                ? streamedOutput.result.slice(0, 500) + '…'
+                : streamedOutput.result;
+            sendMessage(
+              sourceJid,
+              `@${data.targetGroup} → [${sourceGroup}]\n\n${responsePreview}`,
+            ).catch((err) =>
+              logger.error(
+                { err, sourceGroup },
+                'Failed to forward agent call response',
+              ),
+            );
+          }
+
+          // Write _close sentinel to tell the agent-runner to exit
+          const inputDir = path.join(
+            DATA_DIR,
+            'ipc',
+            data.targetGroup,
+            'input',
+          );
+          try {
+            fs.mkdirSync(inputDir, { recursive: true });
+            fs.writeFileSync(path.join(inputDir, '_close'), '');
+          } catch {
+            // ignore — container will time out eventually
+          }
+        }
+      },
+    );
+
+    // Fallback: if streaming never produced a result with text, use final output
+    if (!responseWritten) {
+      const resultText = output.result || '(no output from agent)';
+
+      writeResponse(
+        output.status === 'success' ? resultText : null,
+        output.status === 'error' ? output.error || 'Unknown error' : null,
+      );
+
+      logger.info(
+        {
+          requestId: data.requestId,
+          sourceGroup,
+          targetGroup: data.targetGroup,
+          status: output.status,
+          resultLength: resultText.length,
+        },
+        'Cross-agent call completed (fallback)',
+      );
+
+      // Forward the response to the source group's chat for visibility
+      if (crossAgentVisibility && sourceJid) {
+        const responsePreview =
+          resultText.length > 500 ? resultText.slice(0, 500) + '…' : resultText;
+        sendMessage(
+          sourceJid,
+          `@${data.targetGroup} → [${sourceGroup}]\n\n${responsePreview}`,
+        ).catch((err) =>
+          logger.error(
+            { err, sourceGroup },
+            'Failed to forward agent call response',
+          ),
+        );
+      }
+    }
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    writeResponse(null, errorMsg);
+
+    logger.error(
+      {
+        requestId: data.requestId,
+        sourceGroup,
+        targetGroup: data.targetGroup,
+        err,
+      },
+      'Cross-agent call failed',
+    );
+  } finally {
+    activeAgentCalls--;
   }
 }

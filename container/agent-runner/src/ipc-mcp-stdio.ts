@@ -14,6 +14,8 @@ import { CronExpressionParser } from 'cron-parser';
 const IPC_DIR = '/workspace/ipc';
 const MESSAGES_DIR = path.join(IPC_DIR, 'messages');
 const TASKS_DIR = path.join(IPC_DIR, 'tasks');
+const AGENT_REQUESTS_DIR = path.join(IPC_DIR, 'agent_requests');
+const AGENT_RESPONSES_DIR = path.join(IPC_DIR, 'agent_responses');
 
 // Context from environment variables (set by the agent runner)
 const chatJid = process.env.NANOCLAW_CHAT_JID!;
@@ -431,6 +433,57 @@ Use available_groups.json to find the JID for a group. The folder name must be c
           text: `Group "${args.name}" registered. It will start receiving messages immediately.`,
         },
       ],
+    };
+  },
+);
+
+server.tool(
+  'call_agent',
+  'Call another agent and wait for a response. The target agent runs in isolated mode (fresh session, no conversation history) with your prompt. Use for cross-agent queries like asking a domain agent for status or data.\n\nThe target agent runs in its own container with its own tools, mounts, and CLAUDE.md. The response is the text output from that agent. Timeout is 120 seconds by default (the target needs time to spin up).\n\nTarget agents are identified by their group folder name (e.g., "whatsapp_research", "whatsapp_planning").',
+  {
+    target_group: z.string().describe('Group folder name of the target agent (e.g., "whatsapp_research", "whatsapp_support")'),
+    prompt: z.string().describe('The instruction/question to send to the target agent'),
+    timeout: z.number().optional().describe('Timeout in milliseconds (default: 120000 = 2 minutes)'),
+  },
+  async (args: { target_group: string; prompt: string; timeout?: number }) => {
+    fs.mkdirSync(AGENT_REQUESTS_DIR, { recursive: true });
+    fs.mkdirSync(AGENT_RESPONSES_DIR, { recursive: true });
+
+    const requestId = `agent-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const request = {
+      requestId,
+      targetGroup: args.target_group,
+      prompt: args.prompt,
+      timeout: args.timeout || 120_000,
+      timestamp: new Date().toISOString(),
+    };
+
+    // Atomic write
+    const reqPath = path.join(AGENT_REQUESTS_DIR, `${requestId}.json`);
+    const tmpPath = `${reqPath}.tmp`;
+    fs.writeFileSync(tmpPath, JSON.stringify(request));
+    fs.renameSync(tmpPath, reqPath);
+
+    // Poll for response
+    const respPath = path.join(AGENT_RESPONSES_DIR, `${requestId}.json`);
+    const deadline = Date.now() + (args.timeout || 120_000);
+    const POLL_INTERVAL = 500;
+
+    while (Date.now() < deadline) {
+      if (fs.existsSync(respPath)) {
+        const data = JSON.parse(fs.readFileSync(respPath, 'utf-8'));
+        fs.unlinkSync(respPath);
+
+        if (data.error) {
+          return { content: [{ type: 'text' as const, text: `Error: ${data.error}` }] };
+        }
+        return { content: [{ type: 'text' as const, text: data.result || '(no output from agent)' }] };
+      }
+      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL));
+    }
+
+    return {
+      content: [{ type: 'text' as const, text: `Error: Agent call timed out after ${args.timeout || 120_000}ms. The target agent may still be processing.` }],
     };
   },
 );
