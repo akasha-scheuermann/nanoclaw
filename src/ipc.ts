@@ -555,6 +555,15 @@ export async function processTaskIpc(
       }
       break;
 
+    case 'restart_nanoclaw':
+      logger.info({ sourceGroup }, 'NanoClaw restart requested via IPC');
+      // Brief delay to let IPC cleanup finish, then exit — launchd/systemd restarts us
+      setTimeout(() => {
+        logger.info('Exiting for restart');
+        process.exit(0);
+      }, 1500);
+      break;
+
     default:
       logger.warn({ type: data.type }, 'Unknown IPC task type');
   }
