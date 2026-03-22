@@ -19,6 +19,7 @@ import {
   GROUPS_DIR,
   STORE_DIR,
 } from '../config.js';
+import { registerChannel, ChannelOpts } from './registry.js';
 import {
   getLastGroupSync,
   getLatestMessage,
@@ -544,3 +545,5 @@ export class WhatsAppChannel implements Channel {
     }
   }
 }
+
+registerChannel('whatsapp', (opts: ChannelOpts) => new WhatsAppChannel(opts));
