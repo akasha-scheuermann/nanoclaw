@@ -1,6 +1,6 @@
 ---
 name: pdf-reader
-description: Read and extract text from PDF files — documents, reports, contracts, spreadsheets. Use whenever you need to read PDF content, not just when explicitly asked. Handles local files, URLs, and WhatsApp attachments.
+description: Read and extract text from PDF files — documents, reports, contracts, spreadsheets. Includes OCR for scanned/image PDFs. Use whenever you need to read PDF content, not just when explicitly asked. Handles local files, URLs, and WhatsApp attachments.
 allowed-tools: Bash(pdf-reader:*)
 ---
 
@@ -12,6 +12,7 @@ allowed-tools: Bash(pdf-reader:*)
 pdf-reader extract report.pdf              # Extract all text
 pdf-reader extract report.pdf --layout     # Preserve tables/columns
 pdf-reader fetch https://example.com/doc.pdf  # Download and extract
+pdf-reader ocr scanned.pdf                 # OCR scanned/image PDFs
 pdf-reader info report.pdf                 # Show metadata + size
 pdf-reader list                            # List all PDFs in directory tree
 ```
@@ -40,6 +41,15 @@ pdf-reader fetch <url> report.pdf         # Also save a local copy
 ```
 
 Downloads the PDF, verifies it has a valid `%PDF` header, then extracts text with layout preservation. Temporary files are cleaned up automatically.
+
+### ocr — OCR scanned/image PDFs
+
+```bash
+pdf-reader ocr <file>                     # OCR all pages
+pdf-reader ocr <file> --pages 1-5         # OCR pages 1 through 5
+```
+
+Converts PDF pages to images at 300 DPI using `pdftoppm`, then runs Tesseract OCR on each page. Use this when `extract` returns empty/garbled text (indicating a scanned document).
 
 ### info — PDF metadata and file size
 

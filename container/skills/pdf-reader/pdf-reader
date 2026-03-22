@@ -13,6 +13,7 @@ pdf-reader — Extract text and metadata from PDF files
 Usage:
   pdf-reader extract <file> [--layout] [--pages N-M]
   pdf-reader fetch <url> [filename]
+  pdf-reader ocr <file> [--pages N-M]
   pdf-reader info <file>
   pdf-reader list
   pdf-reader help
@@ -20,6 +21,7 @@ Usage:
 Commands:
   extract   Extract text from a PDF file to stdout
   fetch     Download a PDF from a URL and extract text
+  ocr       OCR scanned/image PDFs using Tesseract
   info      Show PDF metadata and file size
   list      List all PDFs in current directory tree
   help      Show this help message
@@ -27,6 +29,9 @@ Commands:
 Extract options:
   --layout  Preserve original layout (tables, columns)
   --pages   Page range to extract (e.g. 1-5, 3-3 for single page)
+
+OCR options:
+  --pages   Page range to OCR (e.g. 1-5, 3-3 for single page)
 USAGE
 }
 
@@ -184,6 +189,78 @@ cmd_list() {
   fi
 }
 
+cmd_ocr() {
+  local file="${1:-}"
+
+  if [[ -z "$file" ]]; then
+    echo "Error: No file specified" >&2
+    echo "Usage: pdf-reader ocr <file> [--pages N-M]" >&2
+    exit 1
+  fi
+
+  if [[ ! -f "$file" ]]; then
+    echo "Error: File not found: $file" >&2
+    exit 1
+  fi
+
+  shift
+  local first_page=""
+  local last_page=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --pages)
+        if [[ -z "${2:-}" ]]; then
+          echo "Error: --pages requires a range argument (e.g. 1-5)" >&2
+          exit 1
+        fi
+        local range="$2"
+        first_page="${range%-*}"
+        last_page="${range#*-}"
+        shift 2
+        ;;
+      *)
+        echo "Error: Unknown option: $1" >&2
+        exit 1
+        ;;
+    esac
+  done
+
+  # Convert PDF pages to images, then OCR each
+  local tmpdir
+  tmpdir="$(mktemp -d /tmp/pdf-ocr-XXXXXX)"
+  trap 'rm -rf "$tmpdir"' EXIT
+
+  # Build pdftoppm arguments for page range
+  local ppm_args=()
+  if [[ -n "$first_page" ]]; then
+    ppm_args+=(-f "$first_page")
+  fi
+  if [[ -n "$last_page" ]]; then
+    ppm_args+=(-l "$last_page")
+  fi
+
+  # Convert to PPM images (one per page)
+  pdftoppm ${ppm_args[@]+"${ppm_args[@]}"} -r 300 "$file" "$tmpdir/page"
+
+  # OCR each page image
+  local found=false
+  for img in "$tmpdir"/page-*.ppm; do
+    [[ -f "$img" ]] || continue
+    found=true
+    local page_num
+    page_num="$(basename "$img" | sed 's/page-0*//' | sed 's/\.ppm//')"
+    echo "--- Page $page_num ---"
+    tesseract "$img" stdout 2>/dev/null
+    echo ""
+  done
+
+  if [[ "$found" == false ]]; then
+    echo "Error: No pages extracted from PDF" >&2
+    exit 1
+  fi
+}
+
 # Main dispatch
 command="${1:-help}"
 shift || true
@@ -191,6 +268,7 @@ shift || true
 case "$command" in
   extract) cmd_extract "$@" ;;
   fetch)   cmd_fetch "$@" ;;
+  ocr)     cmd_ocr "$@" ;;
   info)    cmd_info "$@" ;;
   list)    cmd_list ;;
   help|--help|-h) usage ;;

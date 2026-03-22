@@ -25,6 +25,7 @@ RUN apt-get update && apt-get install -y \
     curl \
     git \
     poppler-utils \
+    tesseract-ocr \
     && rm -rf /var/lib/apt/lists/*
 
 # Set Chromium path for agent-browser
