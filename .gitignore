@@ -12,6 +12,9 @@ logs/
 # Groups - all per-installation state
 groups/
 
+# Shared inter-agent directory (runtime content)
+shared/
+
 # Secrets
 *.keys.json
 .env
