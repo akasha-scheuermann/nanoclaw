@@ -24,6 +24,7 @@ RUN apt-get update && apt-get install -y \
     libxshmfence1 \
     curl \
     git \
+    sqlite3 \
     poppler-utils \
     tesseract-ocr \
     && rm -rf /var/lib/apt/lists/*
