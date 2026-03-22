@@ -70,7 +70,7 @@ export class GroupQueue {
 
     if (state.active) {
       state.pendingMessages = true;
-      logger.debug({ groupJid }, 'Container active, message queued');
+      logger.info({ groupJid }, 'Container active, message queued');
       return;
     }
 
@@ -79,7 +79,7 @@ export class GroupQueue {
       if (!this.waitingGroups.includes(groupJid)) {
         this.waitingGroups.push(groupJid);
       }
-      logger.debug(
+      logger.info(
         { groupJid, activeCount: this.activeCount },
         'At concurrency limit, message queued',
       );
@@ -111,7 +111,7 @@ export class GroupQueue {
       if (state.idleWaiting) {
         this.closeStdin(groupJid);
       }
-      logger.debug({ groupJid, taskId }, 'Container active, task queued');
+      logger.info({ groupJid, taskId }, 'Container active, task queued');
       return;
     }
 
@@ -120,7 +120,7 @@ export class GroupQueue {
       if (!this.waitingGroups.includes(groupJid)) {
         this.waitingGroups.push(groupJid);
       }
-      logger.debug(
+      logger.info(
         { groupJid, taskId, activeCount: this.activeCount },
         'At concurrency limit, task queued',
       );
@@ -208,7 +208,7 @@ export class GroupQueue {
     state.pendingMessages = false;
     this.activeCount++;
 
-    logger.debug(
+    logger.info(
       { groupJid, reason, activeCount: this.activeCount },
       'Starting container for group',
     );
@@ -243,7 +243,7 @@ export class GroupQueue {
     state.runningTaskId = task.id;
     this.activeCount++;
 
-    logger.debug(
+    logger.info(
       { groupJid, taskId: task.id, activeCount: this.activeCount },
       'Running queued task',
     );
