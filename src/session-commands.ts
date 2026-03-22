@@ -17,13 +17,15 @@ export function extractSessionCommand(
 
 /**
  * Check if a session command sender is authorized.
- * Allowed: main group (any sender), or trusted/admin sender (is_from_me) in any group.
+ * Allowed: main group (any sender), is_from_me, or sender JID in adminJids list.
  */
 export function isSessionCommandAllowed(
   isMainGroup: boolean,
   isFromMe: boolean,
+  senderJid: string,
+  adminJids: string[],
 ): boolean {
-  return isMainGroup || isFromMe;
+  return isMainGroup || isFromMe || adminJids.includes(senderJid);
 }
 
 /** Minimal agent result interface — matches the subset of ContainerOutput used here. */
@@ -65,6 +67,7 @@ export async function handleSessionCommand(opts: {
   groupName: string;
   triggerPattern: RegExp;
   timezone: string;
+  adminJids: string[];
   deps: SessionCommandDeps;
 }): Promise<{ handled: false } | { handled: true; success: boolean }> {
   const {
@@ -73,6 +76,7 @@ export async function handleSessionCommand(opts: {
     groupName,
     triggerPattern,
     timezone,
+    adminJids,
     deps,
   } = opts;
 
@@ -85,7 +89,14 @@ export async function handleSessionCommand(opts: {
 
   if (!command || !cmdMsg) return { handled: false };
 
-  if (!isSessionCommandAllowed(isMainGroup, cmdMsg.is_from_me === true)) {
+  if (
+    !isSessionCommandAllowed(
+      isMainGroup,
+      cmdMsg.is_from_me === true,
+      cmdMsg.sender,
+      adminJids,
+    )
+  ) {
     // DENIED: send denial if the sender would normally be allowed to interact,
     // then silently consume the command by advancing the cursor past it.
     // Trade-off: other messages in the same batch are also consumed (cursor is
@@ -145,10 +156,21 @@ export async function handleSessionCommand(opts: {
   await deps.setTyping(true);
 
   let hadCmdError = false;
+  let cmdResultReceived = false;
   const cmdOutput = await deps.runAgent(command, async (result) => {
     if (result.status === 'error') hadCmdError = true;
     const text = resultToText(result.result);
     if (text) await deps.sendMessage(text);
+    // Close stdin after receiving the final session marker (result: null after a text result)
+    // or any result — session commands are single-turn.
+    if (
+      cmdResultReceived &&
+      result.status === 'success' &&
+      result.result === null
+    ) {
+      deps.closeStdin();
+    }
+    if (text) cmdResultReceived = true;
   });
 
   // Advance cursor to the command — messages AFTER it remain pending for next poll.

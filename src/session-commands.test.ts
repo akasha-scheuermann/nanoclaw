@@ -43,19 +43,31 @@ describe('extractSessionCommand', () => {
 
 describe('isSessionCommandAllowed', () => {
   it('allows main group regardless of sender', () => {
-    expect(isSessionCommandAllowed(true, false)).toBe(true);
+    expect(isSessionCommandAllowed(true, false, 'user@test', [])).toBe(true);
   });
 
   it('allows trusted/admin sender (is_from_me) in non-main group', () => {
-    expect(isSessionCommandAllowed(false, true)).toBe(true);
+    expect(isSessionCommandAllowed(false, true, 'user@test', [])).toBe(true);
+  });
+
+  it('allows sender in adminJids list', () => {
+    expect(
+      isSessionCommandAllowed(false, false, 'admin@test', ['admin@test']),
+    ).toBe(true);
+  });
+
+  it('denies sender not in adminJids list', () => {
+    expect(
+      isSessionCommandAllowed(false, false, 'user@test', ['admin@test']),
+    ).toBe(false);
   });
 
   it('denies untrusted sender in non-main group', () => {
-    expect(isSessionCommandAllowed(false, false)).toBe(false);
+    expect(isSessionCommandAllowed(false, false, 'user@test', [])).toBe(false);
   });
 
   it('allows trusted sender in main group', () => {
-    expect(isSessionCommandAllowed(true, true)).toBe(true);
+    expect(isSessionCommandAllowed(true, true, 'user@test', [])).toBe(true);
   });
 });
 
@@ -100,6 +112,7 @@ describe('handleSessionCommand', () => {
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
+      adminJids: [],
       deps,
     });
     expect(result.handled).toBe(false);
@@ -113,6 +126,7 @@ describe('handleSessionCommand', () => {
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
+      adminJids: [],
       deps,
     });
     expect(result).toEqual({ handled: true, success: true });
@@ -131,6 +145,7 @@ describe('handleSessionCommand', () => {
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
+      adminJids: [],
       deps,
     });
     expect(result).toEqual({ handled: true, success: true });
@@ -151,6 +166,7 @@ describe('handleSessionCommand', () => {
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
+      adminJids: [],
       deps,
     });
     expect(result).toEqual({ handled: true, success: true });
@@ -170,6 +186,7 @@ describe('handleSessionCommand', () => {
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
+      adminJids: [],
       deps,
     });
     expect(result).toEqual({ handled: true, success: true });
@@ -194,6 +211,27 @@ describe('handleSessionCommand', () => {
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
+      adminJids: [],
+      deps,
+    });
+    expect(result).toEqual({ handled: true, success: true });
+    expect(deps.runAgent).toHaveBeenCalledWith(
+      '/compact',
+      expect.any(Function),
+    );
+  });
+
+  it('allows sender in adminJids list in non-main group', async () => {
+    const deps = makeDeps();
+    const result = await handleSessionCommand({
+      missedMessages: [
+        makeMsg('/compact', { is_from_me: false, sender: 'admin@test' }),
+      ],
+      isMainGroup: false,
+      groupName: 'test',
+      triggerPattern: trigger,
+      timezone: 'UTC',
+      adminJids: ['admin@test'],
       deps,
     });
     expect(result).toEqual({ handled: true, success: true });
@@ -217,6 +255,7 @@ describe('handleSessionCommand', () => {
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
+      adminJids: [],
       deps,
     });
     expect(result).toEqual({ handled: true, success: true });
@@ -237,6 +276,7 @@ describe('handleSessionCommand', () => {
       groupName: 'test',
       triggerPattern: trigger,
       timezone: 'UTC',
+      adminJids: [],
       deps,
     });
     expect(result).toEqual({ handled: true, success: false });
