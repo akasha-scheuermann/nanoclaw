@@ -483,7 +483,31 @@ server.tool(
     }
 
     return {
-      content: [{ type: 'text' as const, text: `Error: Agent call timed out after ${args.timeout || 120_000}ms. The target agent may still be processing.` }],
+      content: [{ type: 'text' as const, text: `Error: Agent call timed out after ${args.timeout || 120_000}ms. The target agent may still be processing.` }]
+    };
+  },
+);
+
+server.tool(
+  'restart_nanoclaw',
+  'Restart the NanoClaw host process. Use when the system is misbehaving, after config changes, or when asked to restart. Launchd/systemd will automatically restart the process after exit.',
+  {},
+  async () => {
+    const data = {
+      type: 'restart_nanoclaw',
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: 'NanoClaw restart requested. The process will exit and be restarted by the service manager.',
+        },
+      ],
     };
   },
 );
