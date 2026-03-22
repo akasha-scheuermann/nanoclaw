@@ -33,9 +33,11 @@ ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 
 # Install bun (required by fastmail-mcp-server which is a TypeScript-first package)
+# Copy binaries instead of symlinking — /root/.bun is inaccessible to non-root users
 RUN curl -fsSL https://bun.sh/install | bash && \
-    ln -s /root/.bun/bin/bun /usr/local/bin/bun && \
-    ln -s /root/.bun/bin/bunx /usr/local/bin/bunx
+    cp /root/.bun/bin/bun /usr/local/bin/bun && \
+    cp /root/.bun/bin/bunx /usr/local/bin/bunx && \
+    rm -rf /root/.bun
 
 # Install agent-browser and claude-code globally
 RUN npm install -g agent-browser @anthropic-ai/claude-code
