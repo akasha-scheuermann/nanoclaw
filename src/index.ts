@@ -76,6 +76,7 @@ let lastTimestamp = '';
 let sessions: Record<string, string> = {};
 let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
+let replyToMessageIds: Record<string, string | undefined> = {};
 // Tracks cursor value before messages were piped to an active container.
 // Used to roll back if the container dies after piping.
 let cursorBeforePipe: Record<string, string> = {};
@@ -188,6 +189,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   );
 
   if (missedMessages.length === 0) return true;
+
+  // Find the message to reply to (for thread support).
+  // Look for the last message that is itself a thread reply — reply to that
+  // so the bot's response stays in the same thread.
+  const threadedMsg = [...missedMessages]
+    .reverse()
+    .find((m) => m.thread_message_id);
+  replyToMessageIds[chatJid] = threadedMsg?.id;
 
   // --- Session command interception (before trigger check) ---
   const cmdResult = await handleSessionCommand({
@@ -309,7 +318,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
         logger.info({ group: group.name }, `Agent output: ${raw.length} chars`);
         if (text) {
-          await channel.sendMessage(chatJid, text);
+          await channel.sendMessage(chatJid, text, replyToMessageIds[chatJid]);
           outputSentToUser = true;
         }
         // Only reset idle timer on actual results, not session-update markers (result: null)
@@ -567,6 +576,11 @@ async function startMessageLoop(): Promise<void> {
           const formatted = formatMessages(messagesToSend, TIMEZONE);
 
           if (queue.sendMessage(chatJid, formatted)) {
+            // Update reply-to for piped messages (thread awareness)
+            const threadedPiped = [...messagesToSend]
+              .reverse()
+              .find((m) => m.thread_message_id);
+            replyToMessageIds[chatJid] = threadedPiped?.id;
             logger.debug(
               { chatJid, count: messagesToSend.length },
               'Piped messages to active container',
