@@ -66,6 +66,33 @@ systemctl --user stop nanoclaw
 systemctl --user restart nanoclaw
 ```
 
+## Database Schema
+
+Single SQLite database at `store/messages.db` (better-sqlite3). Journal mode configurable via `SQLITE_JOURNAL_MODE` env var, defaults to DELETE for Docker bind-mount compatibility. Schema defined in `src/db.ts:createSchema()` with inline ALTER TABLE migrations for backward compatibility.
+
+### Tables
+
+| Table | PK | Purpose |
+|-------|-----|---------|
+| `chats` | `jid` | Chat/group metadata — name, last activity, channel type, group flag. Special row `__group_sync__` tracks last metadata sync time. |
+| `messages` | `(id, chat_jid)` | Message history for registered groups only. FK to `chats.jid`. Indexed on `timestamp`. |
+| `reactions` | `(message_id, message_chat_jid, reactor_jid)` | Emoji reactions on messages. Indexed on message, reactor, emoji, and timestamp. Empty emoji = delete reaction. |
+| `registered_groups` | `jid` | Groups registered for agent processing. `folder` is UNIQUE. `container_config` is JSON. `requires_trigger` controls whether trigger word is needed. `model` for per-group model override. `is_main` flags the primary group. |
+| `scheduled_tasks` | `id` | Cron/scheduled tasks per group. `schedule_type` + `schedule_value` define timing. `context_mode` is `'isolated'` or `'conversational'`. `status`: active/completed. |
+| `task_run_logs` | `id` (autoincrement) | Execution log for scheduled tasks. FK to `scheduled_tasks.id`. Cascade-deleted when parent task is deleted. |
+| `sessions` | `group_folder` | Maps group folders to Claude Agent SDK session IDs. |
+| `router_state` | `key` | Key-value store for router state (`last_timestamp`, `last_agent_timestamp`). |
+
+### Key Columns
+
+**messages**: `is_from_me` (0/1), `is_bot_message` (0/1, backfilled from content prefix), `thread_message_id` (for thread replies).
+
+**chats**: `channel` (whatsapp/discord/telegram/etc), `is_group` (0/1). Backfilled from JID patterns on migration (`@g.us` = whatsapp group, `@s.whatsapp.net` = whatsapp DM, `dc:` = discord, `tg:` = telegram).
+
+### Known Gotcha
+
+SQL `LIMIT ?` with parameterized placeholders doesn't work reliably in better-sqlite3 — use hardcoded `LIMIT N` values instead (see `feedback_db_limit_bug.md` in memory).
+
 ## Troubleshooting
 
 **WhatsApp not connecting after upgrade:** WhatsApp is now a separate skill, not bundled in core. Run `/add-whatsapp` (or `npx tsx scripts/apply-skill.ts .claude/skills/add-whatsapp && npm run build`) to install it. Existing auth credentials and groups are preserved.
