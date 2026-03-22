@@ -556,6 +556,13 @@ export async function processTaskIpc(
       break;
 
     case 'restart_nanoclaw':
+      if (!isMain) {
+        logger.warn(
+          { sourceGroup },
+          'Unauthorized restart_nanoclaw attempt blocked',
+        );
+        break;
+      }
       logger.info({ sourceGroup }, 'NanoClaw restart requested via IPC');
       // Brief delay to let IPC cleanup finish, then exit — launchd/systemd restarts us
       setTimeout(() => {
