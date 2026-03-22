@@ -78,6 +78,7 @@ const IPC_POLL_MS = 500;
 function getBlockedMcpTools(): string[] {
   const blocked: string[] = [];
   const servers: Record<string, string> = {
+    FASTMAIL_BLOCKED_TOOLS: 'fastmail',
     PLEX_BLOCKED_TOOLS: 'plex',
   };
   for (const [envVar, serverName] of Object.entries(servers)) {
@@ -469,6 +470,7 @@ async function runQuery(
         'NotebookEdit',
         'mcp__nanoclaw__*',
         ...(process.env.PLEX_TOKEN && process.env.PLEX_URL ? ['mcp__plex__*'] : []),
+        ...(process.env.FASTMAIL_API_TOKEN ? ['mcp__fastmail__*'] : []),
       ],
       disallowedTools: getBlockedMcpTools(),
       env: sdkEnv,
@@ -499,6 +501,18 @@ async function runQuery(
                   '--plex-token',
                   process.env.PLEX_TOKEN,
                 ],
+              },
+            }
+          : {}),
+        // Fastmail MCP server — enabled when FASTMAIL_API_TOKEN is set
+        ...(process.env.FASTMAIL_API_TOKEN
+          ? {
+              fastmail: {
+                command: 'npx',
+                args: ['fastmail-mcp-server'],
+                env: {
+                  FASTMAIL_API_TOKEN: process.env.FASTMAIL_API_TOKEN,
+                },
               },
             }
           : {}),

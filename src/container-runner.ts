@@ -31,7 +31,13 @@ import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
 
 // In-container MCP server env vars — read from .env and forwarded to containers
-const mcpEnvKeys = ['PLEX_TOKEN', 'PLEX_URL', 'PLEX_BLOCKED_TOOLS'] as const;
+const mcpEnvKeys = [
+  'PLEX_TOKEN',
+  'PLEX_URL',
+  'PLEX_BLOCKED_TOOLS',
+  'FASTMAIL_API_TOKEN',
+  'FASTMAIL_BLOCKED_TOOLS',
+] as const;
 const mcpEnvConfig = readEnvFile([...mcpEnvKeys]);
 
 // Sentinel markers for robust output parsing (must match agent-runner)
