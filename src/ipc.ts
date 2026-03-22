@@ -4,7 +4,7 @@ import path from 'path';
 import { CronExpressionParser } from 'cron-parser';
 
 import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
-import { AvailableGroup } from './container-runner.js';
+import { AvailableGroup, runContainerAgent } from './container-runner.js';
 import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
@@ -236,6 +236,48 @@ export function startIpcWatcher(deps: IpcDeps): void {
             'Error reading MCP requests directory',
           );
         }
+      }
+
+      // Process cross-agent call requests
+      const agentRequestsDir = path.join(
+        ipcBaseDir,
+        sourceGroup,
+        'agent_requests',
+      );
+      const agentResponsesDir = path.join(
+        ipcBaseDir,
+        sourceGroup,
+        'agent_responses',
+      );
+      try {
+        if (fs.existsSync(agentRequestsDir)) {
+          const requestFiles = fs
+            .readdirSync(agentRequestsDir)
+            .filter((f) => f.endsWith('.json'));
+          for (const file of requestFiles) {
+            const filePath = path.join(agentRequestsDir, file);
+            try {
+              const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+              fs.unlinkSync(filePath);
+              processAgentCallRequest(
+                data,
+                agentResponsesDir,
+                sourceGroup,
+                registeredGroups,
+              );
+            } catch (err) {
+              logger.error(
+                { file, error: err },
+                'Failed to process agent call request',
+              );
+            }
+          }
+        }
+      } catch (err) {
+        logger.error(
+          { sourceGroup, error: err },
+          'Failed to scan agent requests',
+        );
       }
     }
 
@@ -629,5 +671,107 @@ async function processMcpRequest(
       },
       'MCP bridge request failed',
     );
+  }
+}
+
+const MAX_CONCURRENT_AGENT_CALLS = 2;
+let activeAgentCalls = 0;
+
+async function processAgentCallRequest(
+  data: {
+    requestId: string;
+    targetGroup: string;
+    prompt: string;
+    timeout?: number;
+  },
+  responsesDir: string,
+  sourceGroup: string,
+  registeredGroups: Record<string, RegisteredGroup>,
+): Promise<void> {
+  const writeResponse = (result: string | null, error?: string) => {
+    fs.mkdirSync(responsesDir, { recursive: true });
+    const respFile = path.join(responsesDir, `${data.requestId}.json`);
+    const tmpFile = `${respFile}.tmp`;
+    fs.writeFileSync(
+      tmpFile,
+      JSON.stringify({ result, error, timestamp: new Date().toISOString() }),
+    );
+    fs.renameSync(tmpFile, respFile);
+  };
+
+  // Validate target group exists
+  const targetEntry = Object.entries(registeredGroups).find(
+    ([_, g]) => g.folder === data.targetGroup,
+  );
+  if (!targetEntry) {
+    writeResponse(null, `Target group '${data.targetGroup}' not registered`);
+    return;
+  }
+
+  const [targetJid, targetGroup] = targetEntry;
+
+  // Concurrency guard
+  if (activeAgentCalls >= MAX_CONCURRENT_AGENT_CALLS) {
+    writeResponse(
+      null,
+      `Too many concurrent agent calls (max ${MAX_CONCURRENT_AGENT_CALLS}). Try again later.`,
+    );
+    return;
+  }
+
+  activeAgentCalls++;
+  try {
+    logger.info(
+      { sourceGroup, targetGroup: data.targetGroup, requestId: data.requestId },
+      'Processing cross-agent call',
+    );
+
+    const callGroup = { ...targetGroup, folder: data.targetGroup };
+    const timeout = data.timeout || 120_000;
+
+    const timeoutPromise = new Promise<string>((resolve) =>
+      setTimeout(() => resolve('__TIMEOUT__'), timeout),
+    );
+
+    const agentPromise = new Promise<string>((resolve) => {
+      let output = '';
+      runContainerAgent(
+        callGroup,
+        {
+          prompt: `[Cross-agent call from ${sourceGroup}]\n\n${data.prompt}`,
+          groupFolder: data.targetGroup,
+          chatJid: targetJid,
+          isMain: !!targetGroup.isMain,
+          isScheduledTask: true,
+        },
+        () => {}, // onProcess — no-op for agent calls
+        async (containerOutput) => {
+          if (containerOutput.result) {
+            output += containerOutput.result;
+          }
+        },
+      )
+        .then((result) => {
+          resolve(output || result.result || '(no output from agent)');
+        })
+        .catch((err) => {
+          resolve(`Error: ${err instanceof Error ? err.message : String(err)}`);
+        });
+    });
+
+    const result = await Promise.race([agentPromise, timeoutPromise]);
+
+    if (result === '__TIMEOUT__') {
+      writeResponse(null, `Agent call timed out after ${timeout}ms`);
+    } else {
+      writeResponse(result);
+    }
+  } catch (err) {
+    writeResponse(
+      null,
+      `Agent call failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  } finally {
+    activeAgentCalls--;
   }
 }
