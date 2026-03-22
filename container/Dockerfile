@@ -25,6 +25,7 @@ RUN apt-get update && apt-get install -y \
     curl \
     git \
     sqlite3 \
+    unzip \
     poppler-utils \
     tesseract-ocr \
     && rm -rf /var/lib/apt/lists/*
