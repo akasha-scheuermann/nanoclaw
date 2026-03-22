@@ -439,9 +439,9 @@ Use available_groups.json to find the JID for a group. The folder name must be c
 
 server.tool(
   'call_agent',
-  'Call another agent and wait for a response. The target agent runs in isolated mode (fresh session, no conversation history) with your prompt. Use for cross-agent queries like asking a domain agent for status or data.\n\nThe target agent runs in its own container with its own tools, mounts, and CLAUDE.md. The response is the text output from that agent. Timeout is 120 seconds by default (the target needs time to spin up).\n\nTarget agents are identified by their group folder name (e.g., "whatsapp_tribe", "whatsapp_planning").',
+  'Call another agent and wait for a response. The target agent runs in isolated mode (fresh session, no conversation history) with your prompt. Use for cross-agent queries like asking a domain agent for status or data.\n\nThe target agent runs in its own container with its own tools, mounts, and CLAUDE.md. The response is the text output from that agent. Timeout is 120 seconds by default (the target needs time to spin up).\n\nTarget agents are identified by their group folder name (e.g., "whatsapp_research", "whatsapp_planning").',
   {
-    target_group: z.string().describe('Group folder name of the target agent (e.g., "whatsapp_tribe", "whatsapp_entertainment")'),
+    target_group: z.string().describe('Group folder name of the target agent (e.g., "whatsapp_research", "whatsapp_support")'),
     prompt: z.string().describe('The instruction/question to send to the target agent'),
     timeout: z.number().optional().describe('Timeout in milliseconds (default: 120000 = 2 minutes)'),
   },
