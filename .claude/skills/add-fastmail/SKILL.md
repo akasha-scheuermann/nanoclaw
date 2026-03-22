@@ -42,6 +42,15 @@ git merge --continue
 FASTMAIL_API_TOKEN=fmu1-...
 ```
 
+3. (Optional) Block dangerous tools by adding to `.env`:
+```
+FASTMAIL_BLOCKED_TOOLS=send_email,mark_as_spam
+```
+   - Comma-separated list of tool names to hard-block at the SDK level
+   - Blocked tools are completely unavailable to agents (not just discouraged)
+   - Common tools to block: `send_email`, `reply_to_email`, `forward_email`, `mark_as_spam`, `move_email`
+   - Leave unset to allow all tools
+
 ## Phase 3: Build and verify
 
 ```bash
@@ -60,7 +69,8 @@ Restart NanoClaw and test from any agent:
 
 - **`fastmail-mcp-server` npm package** as a container dependency
 - **MCP server config** in `container/agent-runner/src/index.ts` — spawns the package as a child-process MCP server
-- **Env var forwarding** for `FASTMAIL_API_TOKEN`
+- **Env var forwarding** for `FASTMAIL_API_TOKEN` and `FASTMAIL_BLOCKED_TOOLS`
+- **Tool blocking** via `FASTMAIL_BLOCKED_TOOLS` env var — hard-blocks listed tools at SDK level using `disallowedTools`
 - **Auto-enabled**: Server starts only when `FASTMAIL_API_TOKEN` is set in `.env`
 
 ### Tools provided by `fastmail-mcp-server`
