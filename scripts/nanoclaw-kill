@@ -1,0 +1,10 @@
+#!/bin/bash
+# Kill all NanoClaw agents and stop the service
+
+# Stop the service (prevents new agents from spawning)
+launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist 2>/dev/null
+
+# Kill all running agent containers
+docker ps -q --filter "name=nanoclaw-" | xargs -r docker kill 2>/dev/null
+
+echo "NanoClaw stopped. All agents killed."

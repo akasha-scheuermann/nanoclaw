@@ -25,6 +25,11 @@ shared/
 # OS
 .DS_Store
 
+# Syncthing
+.stfolder/
+.stignore
+.stversions/
+
 # IDE
 .idea/
 .vscode/
