@@ -768,7 +768,10 @@ export function writeTasksSnapshot(
     : tasks.filter((t) => t.groupFolder === groupFolder);
 
   const tasksFile = path.join(groupIpcDir, 'current_tasks.json');
-  fs.writeFileSync(tasksFile, JSON.stringify(filteredTasks, null, 2));
+  fs.writeFileSync(
+    tasksFile,
+    JSON.stringify({ timezone: TIMEZONE, tasks: filteredTasks }, null, 2),
+  );
 }
 
 export interface AvailableGroup {
