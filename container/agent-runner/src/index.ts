@@ -71,6 +71,27 @@ const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
 const IPC_POLL_MS = 500;
 
 /**
+ * Parse blocked MCP tools from env vars.
+ * Format: {SERVER}_BLOCKED_TOOLS=tool1,tool2,tool3
+ * Returns disallowedTools entries like: mcp__{server}__tool1, mcp__{server}__tool2
+ */
+function getBlockedMcpTools(): string[] {
+  const blocked: string[] = [];
+  const servers: Record<string, string> = {
+    PLEX_BLOCKED_TOOLS: 'plex',
+  };
+  for (const [envVar, serverName] of Object.entries(servers)) {
+    const value = process.env[envVar];
+    if (value) {
+      for (const tool of value.split(',').map(t => t.trim()).filter(Boolean)) {
+        blocked.push(`mcp__${serverName}__${tool}`);
+      }
+    }
+  }
+  return blocked;
+}
+
+/**
  * Push-based async iterable for streaming user messages to the SDK.
  * Keeps the iterable alive until end() is called, preventing isSingleUserTurn.
  */
@@ -446,8 +467,10 @@ async function runQuery(
         'TeamCreate', 'TeamDelete', 'SendMessage',
         'TodoWrite', 'ToolSearch', 'Skill',
         'NotebookEdit',
-        'mcp__nanoclaw__*'
+        'mcp__nanoclaw__*',
+        ...(process.env.PLEX_TOKEN && process.env.PLEX_URL ? ['mcp__plex__*'] : []),
       ],
+      disallowedTools: getBlockedMcpTools(),
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
