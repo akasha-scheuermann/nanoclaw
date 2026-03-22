@@ -268,6 +268,13 @@ export class WhatsAppChannel implements Channel {
             content = content.replace(mentionPattern, `@${ASSISTANT_NAME}`);
           }
 
+          // Detect thread replies via contextInfo (quoted message reference)
+          const contextInfo =
+            normalized?.extendedTextMessage?.contextInfo ||
+            normalized?.imageMessage?.contextInfo ||
+            normalized?.videoMessage?.contextInfo;
+          const threadMessageId = contextInfo?.stanzaId || undefined;
+
           const rawSender = msg.key.participant || msg.key.remoteJid || '';
           const sender = await this.translateJid(rawSender);
           const senderName = msg.pushName || sender.split('@')[0];
@@ -290,6 +297,7 @@ export class WhatsAppChannel implements Channel {
             timestamp,
             is_from_me: fromMe,
             is_bot_message: isBotMessage,
+            thread_message_id: threadMessageId,
           });
         }
       }
