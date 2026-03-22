@@ -51,6 +51,12 @@ COPY agent-runner/package*.json ./
 # Install dependencies
 RUN npm install
 
+# Patch fastmail-mcp-server: only request submission capability when sending email.
+# Upstream bug: submission is requested on every JMAP call, causing 403 for tokens without send permission.
+# See: https://github.com/radiosilence/fastmail-mcp-server/issues/TBD
+RUN sed -i 's|"urn:ietf:params:jmap:submission",|...(methodCalls.some(c => c[0].startsWith("EmailSubmission")) ? ["urn:ietf:params:jmap:submission"] : []),|' \
+    node_modules/fastmail-mcp-server/src/jmap/client.ts
+
 # Copy source code
 COPY agent-runner/ ./
 
