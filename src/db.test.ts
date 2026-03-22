@@ -419,7 +419,11 @@ describe('getLatestMessage', () => {
     });
 
     const latest = getLatestMessage('group@g.us');
-    expect(latest).toEqual({ id: 'new', fromMe: false, sender: 'b@s.whatsapp.net' });
+    expect(latest).toEqual({
+      id: 'new',
+      fromMe: false,
+      sender: 'b@s.whatsapp.net',
+    });
   });
 
   it('returns fromMe: true for own messages', () => {
@@ -435,7 +439,11 @@ describe('getLatestMessage', () => {
     });
 
     const latest = getLatestMessage('group@g.us');
-    expect(latest).toEqual({ id: 'mine', fromMe: true, sender: 'me@s.whatsapp.net' });
+    expect(latest).toEqual({
+      id: 'mine',
+      fromMe: true,
+      sender: 'me@s.whatsapp.net',
+    });
   });
 
   it('returns undefined for empty chat', () => {
@@ -458,7 +466,10 @@ describe('getMessageFromMe', () => {
       is_from_me: true,
     });
 
-    expect(getMessageFromMe('mine', 'group@g.us')).toEqual({ fromMe: true, sender: 'me@s.whatsapp.net' });
+    expect(getMessageFromMe('mine', 'group@g.us')).toEqual({
+      fromMe: true,
+      sender: 'me@s.whatsapp.net',
+    });
   });
 
   it('returns false for other messages', () => {
@@ -472,11 +483,17 @@ describe('getMessageFromMe', () => {
       timestamp: '2024-01-01T00:00:01.000Z',
     });
 
-    expect(getMessageFromMe('theirs', 'group@g.us')).toEqual({ fromMe: false, sender: 'a@s.whatsapp.net' });
+    expect(getMessageFromMe('theirs', 'group@g.us')).toEqual({
+      fromMe: false,
+      sender: 'a@s.whatsapp.net',
+    });
   });
 
   it('returns false for nonexistent message', () => {
-    expect(getMessageFromMe('nonexistent', 'group@g.us')).toEqual({ fromMe: false, sender: null });
+    expect(getMessageFromMe('nonexistent', 'group@g.us')).toEqual({
+      fromMe: false,
+      sender: null,
+    });
   });
 });
 
