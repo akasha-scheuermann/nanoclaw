@@ -31,7 +31,7 @@ import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
 
 // In-container MCP server env vars — read from .env and forwarded to containers
-const mcpEnvKeys = ['FASTMAIL_API_TOKEN', 'FASTMAIL_ACCOUNT_ID'] as const;
+const mcpEnvKeys = ['FASTMAIL_API_TOKEN'] as const;
 const mcpEnvConfig = readEnvFile([...mcpEnvKeys]);
 
 // Sentinel markers for robust output parsing (must match agent-runner)

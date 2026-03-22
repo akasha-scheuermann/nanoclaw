@@ -463,16 +463,17 @@ async function runQuery(
           },
         },
         // Fastmail MCP server — enabled when FASTMAIL_API_TOKEN is set
-        ...(process.env.FASTMAIL_API_TOKEN ? {
-          fastmail: {
-            command: 'node',
-            args: [path.join(__dirname, 'fastmail-mcp.js')],
-            env: {
-              FASTMAIL_API_TOKEN: process.env.FASTMAIL_API_TOKEN,
-              ...(process.env.FASTMAIL_ACCOUNT_ID ? { FASTMAIL_ACCOUNT_ID: process.env.FASTMAIL_ACCOUNT_ID } : {}),
-            },
-          },
-        } : {}),
+        ...(process.env.FASTMAIL_API_TOKEN
+          ? {
+              fastmail: {
+                command: 'npx',
+                args: ['fastmail-mcp-server'],
+                env: {
+                  FASTMAIL_API_TOKEN: process.env.FASTMAIL_API_TOKEN,
+                },
+              },
+            }
+          : {}),
       },
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],

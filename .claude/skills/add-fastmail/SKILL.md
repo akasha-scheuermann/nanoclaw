@@ -1,17 +1,17 @@
 ---
 name: add-fastmail
-description: Add Fastmail email integration via JMAP API. Runs as an in-container MCP server — no host-side bridge needed.
+description: Add Fastmail email integration via the fastmail-mcp-server npm package. Runs as an in-container MCP server — no host-side bridge needed.
 ---
 
 # Add Fastmail Integration
 
-Adds Fastmail email tools (list, search, read, send, move) to all agent containers via JMAP API.
+Adds Fastmail email tools to all agent containers using the community `fastmail-mcp-server` npm package (JMAP-based).
 
 ## Pre-flight
 
 Check if already applied:
 ```bash
-grep -q 'fastmail-mcp' container/agent-runner/src/index.ts && echo "ALREADY APPLIED" || echo "NOT APPLIED"
+grep -q 'fastmail-mcp-server' container/agent-runner/package.json && echo "ALREADY APPLIED" || echo "NOT APPLIED"
 ```
 
 If already applied, tell the user and stop.
@@ -42,11 +42,10 @@ git merge --continue
 FASTMAIL_API_TOKEN=fmu1-...
 ```
 
-The account ID is auto-discovered from the JMAP session. Only set `FASTMAIL_ACCOUNT_ID` if you have multiple accounts.
-
 ## Phase 3: Build and verify
 
 ```bash
+cd container/agent-runner && npm install && cd ../..
 npm run build
 ./container/build.sh
 ```
@@ -59,7 +58,16 @@ Restart NanoClaw and test from any agent:
 
 ## What This Adds
 
-- **In-container MCP server** (`fastmail-mcp.ts`) with JMAP tools
-- **Tools**: `list_mailboxes`, `list_emails`, `get_email`, `search_emails`, `move_email`, `mark_as_read`, `send_email`, `list_attachments`
-- **Env var forwarding** in container-runner for `FASTMAIL_API_TOKEN` and `FASTMAIL_ACCOUNT_ID`
+- **`fastmail-mcp-server` npm package** as a container dependency
+- **MCP server config** in `container/agent-runner/src/index.ts` — spawns the package as a child-process MCP server
+- **Env var forwarding** for `FASTMAIL_API_TOKEN`
 - **Auto-enabled**: Server starts only when `FASTMAIL_API_TOKEN` is set in `.env`
+
+### Tools provided by `fastmail-mcp-server`
+
+Full read/write email access via JMAP:
+- List mailboxes, list/search/read emails
+- Send, reply, forward emails (with preview→confirm safety flow)
+- Move emails, mark as read/spam
+- Thread support, attachment text extraction
+- Masked email management
