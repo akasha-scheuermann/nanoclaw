@@ -163,6 +163,24 @@ function buildVolumeMounts(
       fs.cpSync(srcDir, dstDir, { recursive: true });
     }
   }
+
+  // Copy user global skills from groups/global/skills/ (gitignored, user-specific)
+  // These override upstream skills from container/skills/
+  const userGlobalSkillsSrc = path.join(GROUPS_DIR, 'global', 'skills');
+  if (fs.existsSync(userGlobalSkillsSrc)) {
+    fs.mkdirSync(skillsDst, { recursive: true });
+    for (const skillDir of fs.readdirSync(userGlobalSkillsSrc)) {
+      const srcDir = path.join(userGlobalSkillsSrc, skillDir);
+      if (!fs.statSync(srcDir).isDirectory()) continue;
+      const dstDir = path.join(skillsDst, skillDir);
+      // Remove existing to allow override of upstream skills
+      if (fs.existsSync(dstDir)) {
+        fs.rmSync(dstDir, { recursive: true, force: true });
+      }
+      fs.cpSync(srcDir, dstDir, { recursive: true });
+    }
+  }
+
   mounts.push({
     hostPath: groupSessionsDir,
     containerPath: '/home/node/.claude',
