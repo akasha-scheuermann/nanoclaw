@@ -10,5 +10,8 @@
 // telegram
 import './telegram.js';
 
+// imessage
+import './imessage.js';
+
 // whatsapp
 import './whatsapp.js';
