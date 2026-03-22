@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 
 import {
+  ADMIN_JIDS,
   ASSISTANT_NAME,
   CREDENTIAL_PROXY_PORT,
   IDLE_TIMEOUT,
@@ -205,6 +206,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     groupName: group.name,
     triggerPattern: TRIGGER_PATTERN,
     timezone: TIMEZONE,
+    adminJids: ADMIN_JIDS,
     deps: {
       sendMessage: (text) => channel.sendMessage(chatJid, text),
       setTyping: (typing) =>
@@ -529,6 +531,8 @@ async function startMessageLoop(): Promise<void> {
               isSessionCommandAllowed(
                 isMainGroup,
                 loopCmdMsg.is_from_me === true,
+                loopCmdMsg.sender,
+                ADMIN_JIDS,
               )
             ) {
               queue.closeStdin(chatJid);
