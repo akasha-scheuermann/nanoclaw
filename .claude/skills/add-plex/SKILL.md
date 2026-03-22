@@ -44,6 +44,15 @@ PLEX_TOKEN=your-plex-token
 PLEX_URL=http://192.168.1.100:32400
 ```
 
+4. (Optional) Block dangerous tools by adding to `.env`:
+```
+PLEX_BLOCKED_TOOLS=playlist_delete,client_control_playback
+```
+   - Comma-separated list of tool names to hard-block at the SDK level
+   - Blocked tools are completely unavailable to agents (not just discouraged)
+   - Common tools to block: `playlist_delete`, `playlist_remove_from`, `client_control_playback`
+   - Leave unset to allow all tools
+
 ## Phase 3: Build and verify
 
 ```bash
@@ -62,7 +71,8 @@ Restart NanoClaw and test from any agent:
 
 - **`uv` in Dockerfile** — Python package runner for MCP servers that use PyPI
 - **MCP server config** in `container/agent-runner/src/index.ts` — spawns `uvx plex-mcp-server --transport stdio` with credentials as CLI args
-- **Env var forwarding** for `PLEX_TOKEN` and `PLEX_URL`
+- **Env var forwarding** for `PLEX_TOKEN`, `PLEX_URL`, and `PLEX_BLOCKED_TOOLS`
+- **Tool blocking** via `PLEX_BLOCKED_TOOLS` env var — hard-blocks listed tools at SDK level using `disallowedTools`
 - **Auto-enabled**: Server starts only when both `PLEX_TOKEN` and `PLEX_URL` are set
 
 ### Tools provided by `plex-mcp-server`
