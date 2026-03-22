@@ -53,6 +53,8 @@ FASTMAIL_BLOCKED_TOOLS=send_email,mark_as_spam
 
 ## Phase 3: Build and verify
 
+`fastmail-mcp-server` is a TypeScript-first package that requires `bun` as its runtime. The Dockerfile installs bun automatically as part of this skill — no manual steps needed.
+
 ```bash
 cd container/agent-runner && npm install && cd ../..
 npm run build
