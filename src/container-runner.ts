@@ -164,6 +164,23 @@ function buildVolumeMounts(
     }
   }
 
+  // Copy user global skills from groups/global/skills/ (gitignored, user-specific)
+  // These override upstream skills from container/skills/
+  const userGlobalSkillsSrc = path.join(GROUPS_DIR, 'global', 'skills');
+  if (fs.existsSync(userGlobalSkillsSrc)) {
+    fs.mkdirSync(skillsDst, { recursive: true });
+    for (const skillDir of fs.readdirSync(userGlobalSkillsSrc)) {
+      const srcDir = path.join(userGlobalSkillsSrc, skillDir);
+      if (!fs.statSync(srcDir).isDirectory()) continue;
+      const dstDir = path.join(skillsDst, skillDir);
+      // Remove existing to allow override of upstream skills
+      if (fs.existsSync(dstDir)) {
+        fs.rmSync(dstDir, { recursive: true, force: true });
+      }
+      fs.cpSync(srcDir, dstDir, { recursive: true });
+    }
+  }
+
   // Symlink per-group skills from groups/{folder}/skills/ into .claude/skills/
   // Symlinks use container paths so they resolve inside the container where
   // /workspace/group/ is mounted. This keeps skills in sync without copying.
