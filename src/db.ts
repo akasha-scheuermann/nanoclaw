@@ -170,6 +170,13 @@ export function initDatabase(): void {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 
   db = new Database(dbPath);
+
+  // Use journal mode from env, defaulting to DELETE.
+  // DELETE avoids -wal/-shm files that aren't reliably visible in Docker bind mounts.
+  // WAL can be used when the DB isn't accessed across mount boundaries.
+  const journalMode = process.env.SQLITE_JOURNAL_MODE || 'DELETE';
+  db.pragma(`journal_mode = ${journalMode}`);
+
   createSchema(db);
 
   // Migrate from JSON files if they exist
