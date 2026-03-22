@@ -221,6 +221,16 @@ function buildVolumeMounts(
     readonly: false,
   });
 
+  // Shared inter-agent directory (read-write for all groups)
+  // Used for cross-agent queues, flags, and shared state
+  const sharedDir = path.join(projectRoot, 'shared');
+  fs.mkdirSync(sharedDir, { recursive: true });
+  mounts.push({
+    hostPath: sharedDir,
+    containerPath: '/workspace/extra/shared',
+    readonly: false,
+  });
+
   // Additional mounts validated against external allowlist (tamper-proof from containers)
   if (group.containerConfig?.additionalMounts) {
     const validatedMounts = validateAdditionalMounts(
