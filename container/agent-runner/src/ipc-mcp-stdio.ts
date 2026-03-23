@@ -257,12 +257,21 @@ server.tool(
         };
       }
 
-      const allTasks = JSON.parse(fs.readFileSync(tasksFile, 'utf-8'));
+      const parsed = JSON.parse(fs.readFileSync(tasksFile, 'utf-8'));
+      const allTasks: Array<{
+        id: string;
+        groupFolder: string;
+        prompt: string;
+        schedule_type: string;
+        schedule_value: string;
+        status: string;
+        next_run: string;
+      }> = Array.isArray(parsed) ? parsed : parsed.tasks ?? [];
 
       const tasks = isMain
         ? allTasks
         : allTasks.filter(
-            (t: { groupFolder: string }) => t.groupFolder === groupFolder,
+            (t) => t.groupFolder === groupFolder,
           );
 
       if (tasks.length === 0) {
