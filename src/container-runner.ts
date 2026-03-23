@@ -288,7 +288,13 @@ function buildVolumeMounts(
     mounts.push(...validatedMounts);
   }
 
-  return mounts;
+  // Deduplicate by containerPath — last entry wins (additionalMounts override auto-mounts)
+  const seen = new Map<string, VolumeMount>();
+  for (const mount of mounts) {
+    seen.set(mount.containerPath, mount);
+  }
+
+  return Array.from(seen.values());
 }
 
 function buildContainerArgs(
