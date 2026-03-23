@@ -1,3 +1,4 @@
+import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -317,6 +318,8 @@ export async function processTaskIpc(
     trigger?: string;
     requiresTrigger?: boolean;
     containerConfig?: RegisteredGroup['containerConfig'];
+    // For rebuild_container
+    requestId?: string;
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
@@ -607,12 +610,83 @@ export async function processTaskIpc(
         break;
       }
       logger.info({ sourceGroup }, 'NanoClaw restart requested via IPC');
+      // Build TypeScript on the host before restarting so source edits take effect.
+      // This runs on macOS (not inside a container) so native modules stay intact.
+      try {
+        logger.info('Running npm run build before restart');
+        execSync('npm run build', {
+          cwd: process.cwd(),
+          timeout: 30_000,
+          stdio: 'pipe',
+        });
+        logger.info('TypeScript build completed');
+      } catch (err) {
+        logger.error(
+          { err },
+          'TypeScript build failed — restarting with existing dist/',
+        );
+      }
       // Brief delay to let IPC cleanup finish, then exit — launchd/systemd restarts us
       setTimeout(() => {
         logger.info('Exiting for restart');
         process.exit(0);
       }, 1500);
       break;
+
+    case 'rebuild_container': {
+      if (!isMain) {
+        logger.warn(
+          { sourceGroup },
+          'Unauthorized rebuild_container attempt blocked',
+        );
+        break;
+      }
+      logger.info({ sourceGroup }, 'Container rebuild requested via IPC');
+      const buildScript = path.join(process.cwd(), 'container', 'build.sh');
+      try {
+        const output = execSync(buildScript, {
+          cwd: process.cwd(),
+          timeout: 300_000, // 5 minutes
+          stdio: 'pipe',
+        });
+        logger.info('Container rebuild completed');
+        // Write result to IPC response file if requestId provided
+        if (data.requestId) {
+          const responseDir = path.join(
+            DATA_DIR,
+            'ipc',
+            sourceGroup,
+            'build_responses',
+          );
+          fs.mkdirSync(responseDir, { recursive: true });
+          fs.writeFileSync(
+            path.join(responseDir, `${data.requestId}.json`),
+            JSON.stringify({
+              success: true,
+              output: output.toString().slice(-500),
+            }),
+          );
+        }
+      } catch (err) {
+        const errMsg =
+          err instanceof Error ? err.message : String(err);
+        logger.error({ err }, 'Container rebuild failed');
+        if (data.requestId) {
+          const responseDir = path.join(
+            DATA_DIR,
+            'ipc',
+            sourceGroup,
+            'build_responses',
+          );
+          fs.mkdirSync(responseDir, { recursive: true });
+          fs.writeFileSync(
+            path.join(responseDir, `${data.requestId}.json`),
+            JSON.stringify({ success: false, error: errMsg }),
+          );
+        }
+      }
+      break;
+    }
 
     default:
       logger.warn({ type: data.type }, 'Unknown IPC task type');
