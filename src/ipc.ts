@@ -670,8 +670,7 @@ export async function processTaskIpc(
           );
         }
       } catch (err) {
-        const errMsg =
-          err instanceof Error ? err.message : String(err);
+        const errMsg = err instanceof Error ? err.message : String(err);
         logger.error({ err }, 'Container rebuild failed');
         if (data.requestId) {
           const responseDir = path.join(
@@ -698,8 +697,7 @@ export async function processTaskIpc(
         );
         break;
       }
-      const commitMessage =
-        data.message || 'chore: snapshot agent workspaces';
+      const commitMessage = data.message || 'chore: snapshot agent workspaces';
       const groupsDir = path.join(process.cwd(), 'groups');
       const SNAPSHOT_RESPONSES_DIR = path.join(
         DATA_DIR,
@@ -736,13 +734,20 @@ export async function processTaskIpc(
           cwd: groupsDir,
           stdio: 'pipe',
         });
-        execSync('git push', { cwd: groupsDir, timeout: 30_000, stdio: 'pipe' });
+        execSync('git push', {
+          cwd: groupsDir,
+          timeout: 30_000,
+          stdio: 'pipe',
+        });
         logger.info('snapshot_groups: committed and pushed');
         if (data.requestId) {
           fs.mkdirSync(SNAPSHOT_RESPONSES_DIR, { recursive: true });
           fs.writeFileSync(
             path.join(SNAPSHOT_RESPONSES_DIR, `${data.requestId}.json`),
-            JSON.stringify({ success: true, output: `Committed: ${commitMessage}` }),
+            JSON.stringify({
+              success: true,
+              output: `Committed: ${commitMessage}`,
+            }),
           );
         }
       } catch (err) {
