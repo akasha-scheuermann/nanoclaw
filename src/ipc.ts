@@ -318,8 +318,10 @@ export async function processTaskIpc(
     trigger?: string;
     requiresTrigger?: boolean;
     containerConfig?: RegisteredGroup['containerConfig'];
-    // For rebuild_container
+    // For rebuild_container / snapshot_groups
     requestId?: string;
+    // For snapshot_groups
+    message?: string;
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
@@ -681,6 +683,75 @@ export async function processTaskIpc(
           fs.mkdirSync(responseDir, { recursive: true });
           fs.writeFileSync(
             path.join(responseDir, `${data.requestId}.json`),
+            JSON.stringify({ success: false, error: errMsg }),
+          );
+        }
+      }
+      break;
+    }
+
+    case 'snapshot_groups': {
+      if (!isMain) {
+        logger.warn(
+          { sourceGroup },
+          'Unauthorized snapshot_groups attempt blocked',
+        );
+        break;
+      }
+      const commitMessage =
+        data.message || 'chore: snapshot agent workspaces';
+      const groupsDir = path.join(process.cwd(), 'groups');
+      const SNAPSHOT_RESPONSES_DIR = path.join(
+        DATA_DIR,
+        'ipc',
+        sourceGroup,
+        'snapshot_responses',
+      );
+      logger.info({ sourceGroup, commitMessage }, 'Groups snapshot requested');
+      try {
+        execSync('git add -A', { cwd: groupsDir, stdio: 'pipe' });
+        // Check if there's anything to commit
+        let nothingToCommit = false;
+        try {
+          execSync('git diff --cached --quiet', {
+            cwd: groupsDir,
+            stdio: 'pipe',
+          });
+          nothingToCommit = true;
+        } catch {
+          // non-zero exit = staged changes exist
+        }
+        if (nothingToCommit) {
+          logger.info('snapshot_groups: nothing to commit');
+          if (data.requestId) {
+            fs.mkdirSync(SNAPSHOT_RESPONSES_DIR, { recursive: true });
+            fs.writeFileSync(
+              path.join(SNAPSHOT_RESPONSES_DIR, `${data.requestId}.json`),
+              JSON.stringify({ success: true, output: 'Nothing to commit.' }),
+            );
+          }
+          break;
+        }
+        execSync(`git commit -m ${JSON.stringify(commitMessage)}`, {
+          cwd: groupsDir,
+          stdio: 'pipe',
+        });
+        execSync('git push', { cwd: groupsDir, timeout: 30_000, stdio: 'pipe' });
+        logger.info('snapshot_groups: committed and pushed');
+        if (data.requestId) {
+          fs.mkdirSync(SNAPSHOT_RESPONSES_DIR, { recursive: true });
+          fs.writeFileSync(
+            path.join(SNAPSHOT_RESPONSES_DIR, `${data.requestId}.json`),
+            JSON.stringify({ success: true, output: `Committed: ${commitMessage}` }),
+          );
+        }
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        logger.error({ err }, 'snapshot_groups failed');
+        if (data.requestId) {
+          fs.mkdirSync(SNAPSHOT_RESPONSES_DIR, { recursive: true });
+          fs.writeFileSync(
+            path.join(SNAPSHOT_RESPONSES_DIR, `${data.requestId}.json`),
             JSON.stringify({ success: false, error: errMsg }),
           );
         }

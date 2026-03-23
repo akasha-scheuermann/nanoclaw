@@ -523,6 +523,54 @@ if (isMain) {
   );
 
   server.tool(
+    'snapshot_groups',
+    'Commit and push any changes in the groups/ userland repo to GitHub. Use after making meaningful changes to your workspace — prompt updates, new skills, rule files. Skips cleanly if nothing has changed.',
+    { message: z.string().optional().describe('Commit message describing what changed') },
+    async ({ message }) => {
+      const SNAPSHOT_RESPONSES_DIR = path.join(IPC_DIR, 'snapshot_responses');
+      fs.mkdirSync(SNAPSHOT_RESPONSES_DIR, { recursive: true });
+
+      const requestId = `snapshot-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const data = {
+        type: 'snapshot_groups',
+        groupFolder,
+        requestId,
+        message: message || 'chore: snapshot agent workspaces',
+        timestamp: new Date().toISOString(),
+      };
+
+      writeIpcFile(TASKS_DIR, data);
+
+      // Poll for result
+      const respPath = path.join(SNAPSHOT_RESPONSES_DIR, `${requestId}.json`);
+      const deadline = Date.now() + 30_000; // 30 seconds
+      const POLL_INTERVAL = 500;
+
+      while (Date.now() < deadline) {
+        if (fs.existsSync(respPath)) {
+          const result = JSON.parse(fs.readFileSync(respPath, 'utf-8'));
+          fs.unlinkSync(respPath);
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: result.success
+                  ? `✓ ${result.output}`
+                  : `Snapshot failed: ${result.error}`,
+              },
+            ],
+          };
+        }
+        await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL));
+      }
+
+      return {
+        content: [{ type: 'text' as const, text: 'Snapshot timed out. Check host logs.' }],
+      };
+    },
+  );
+
+  server.tool(
     'rebuild_container',
     'Rebuild the NanoClaw agent container image on the host. Use after editing container source (agent-runner/, Dockerfile, container skills). The build runs on the host (not inside a container), so native dependencies are built for the correct architecture. New containers will use the updated image on next spawn.',
     {},
