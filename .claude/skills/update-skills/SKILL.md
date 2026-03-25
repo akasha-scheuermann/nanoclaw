@@ -91,7 +91,15 @@ If updates are available:
 For each selected skill (process one at a time):
 
 1. Tell the user which skill is being updated.
-2. Run: `git merge upstream/skill/<name> --no-edit`
+
+2. **Runtime guard** — if the skill is `apple-container`, check the current runtime before merging:
+   ```bash
+   grep "CONTAINER_RUNTIME_BIN" src/container-runtime.ts
+   ```
+   - If it shows `'docker'`: this update would switch the runtime to Apple Container. Tell the user clearly and skip this skill unless they explicitly confirm they want to switch runtimes. If they want to switch, remind them to also rebuild the container image afterwards (`./container/build.sh`).
+   - If it shows `'container'`: runtime already matches. Proceed with the merge.
+
+3. Run: `git merge upstream/skill/<name> --no-edit`
 3. If the merge is clean, move to the next skill.
 4. If conflicts occur:
    - Run `git status` to identify conflicted files.
