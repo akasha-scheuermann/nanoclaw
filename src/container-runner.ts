@@ -25,7 +25,7 @@ import {
   stopContainer,
 } from './container-runtime.js';
 import { OneCLI } from '@onecli-sh/sdk';
-import { readEnvFile } from './env.js';
+import { parseEnvFileFull, readEnvFile } from './env.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
 
@@ -303,6 +303,7 @@ async function buildContainerArgs(
   containerName: string,
   model?: string,
   agentIdentifier?: string,
+  groupFolder?: string,
 ): Promise<string[]> {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
@@ -342,11 +343,41 @@ async function buildContainerArgs(
     args.push('-e', 'HOME=/home/node');
   }
 
-  // Forward in-container MCP server credentials
-  for (const key of mcpEnvKeys) {
-    const value = process.env[key] || mcpEnvConfig[key];
-    if (value) {
-      args.push('-e', `${key}=${value}`);
+  // Forward container secrets from per-group .env (groups/{folder}/.env).
+  // - Literal values (KEY=value): forwarded as -e KEY=value.
+  // - op:// references (KEY=op://vault/item/field): forwarded as -e KEY (no value).
+  //   The caller wraps docker with `op run --env-file` so docker inherits the
+  //   resolved value from its process environment.
+  // Keys not in group .env fall back to the root .env / process.env (mcpEnvKeys only).
+  if (groupFolder) {
+    const groupEnvPath = path.join(GROUPS_DIR, groupFolder, '.env');
+    const groupEnvAll = parseEnvFileFull(groupEnvPath);
+    const handledKeys = new Set<string>();
+
+    for (const [key, value] of Object.entries(groupEnvAll)) {
+      if (value.startsWith('op://')) {
+        args.push('-e', key); // docker inherits resolved value from op run
+      } else {
+        args.push('-e', `${key}=${value}`);
+      }
+      handledKeys.add(key);
+    }
+
+    // Fallback: mcpEnvKeys not covered by group .env → root .env / process.env
+    for (const key of mcpEnvKeys) {
+      if (handledKeys.has(key)) continue;
+      const value = process.env[key] || mcpEnvConfig[key];
+      if (value) {
+        args.push('-e', `${key}=${value}`);
+      }
+    }
+  } else {
+    // No group folder — use root .env for mcpEnvKeys only
+    for (const key of mcpEnvKeys) {
+      const value = process.env[key] || mcpEnvConfig[key];
+      if (value) {
+        args.push('-e', `${key}=${value}`);
+      }
     }
   }
 
@@ -386,6 +417,7 @@ export async function runContainerAgent(
     containerName,
     group.model,
     agentIdentifier,
+    group.folder,
   );
 
   logger.debug(
@@ -414,9 +446,50 @@ export async function runContainerAgent(
   const logsDir = path.join(groupDir, 'logs');
   fs.mkdirSync(logsDir, { recursive: true });
 
+  // If the group .env has op:// references, wrap docker with `op run` so the
+  // 1Password CLI resolves them on the host before injecting into the container.
+  // The service account token authenticates op; all resolved values reach the
+  // container via docker's -e KEY (no-value) args set in buildContainerArgs.
+  const groupEnvPath = path.join(GROUPS_DIR, group.folder, '.env');
+  const groupEnvAll = parseEnvFileFull(groupEnvPath);
+  const hasOpRefs = Object.values(groupEnvAll).some((v) =>
+    v.startsWith('op://'),
+  );
+
+  let spawnBin: string;
+  let spawnArgs: string[];
+  let spawnEnv: NodeJS.ProcessEnv | undefined;
+
+  if (hasOpRefs) {
+    const serviceToken = groupEnvAll['OP_SERVICE_ACCOUNT_TOKEN'];
+    spawnBin = 'op';
+    spawnArgs = [
+      'run',
+      '--env-file',
+      groupEnvPath,
+      '--',
+      CONTAINER_RUNTIME_BIN,
+      ...containerArgs,
+    ];
+    // op reads OP_SERVICE_ACCOUNT_TOKEN from its own process env to authenticate
+    spawnEnv = {
+      ...process.env,
+      ...(serviceToken ? { OP_SERVICE_ACCOUNT_TOKEN: serviceToken } : {}),
+    };
+    logger.info(
+      { group: group.name, containerName },
+      'Using op run wrapper to resolve 1Password secrets',
+    );
+  } else {
+    spawnBin = CONTAINER_RUNTIME_BIN;
+    spawnArgs = containerArgs;
+    spawnEnv = undefined;
+  }
+
   return new Promise((resolve) => {
-    const container = spawn(CONTAINER_RUNTIME_BIN, containerArgs, {
+    const container = spawn(spawnBin, spawnArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
+      ...(spawnEnv ? { env: spawnEnv } : {}),
     });
 
     onProcess(container, containerName);
