@@ -215,6 +215,15 @@ function createSchema(database: Database.Database): void {
   } catch {
     /* column already exists */
   }
+
+  // Add token usage columns to task_run_logs if they don't exist
+  try {
+    database.exec(`ALTER TABLE task_run_logs ADD COLUMN input_tokens INTEGER`);
+    database.exec(`ALTER TABLE task_run_logs ADD COLUMN output_tokens INTEGER`);
+    database.exec(`ALTER TABLE task_run_logs ADD COLUMN total_cost_usd REAL`);
+  } catch {
+    /* columns already exist */
+  }
 }
 
 export function initDatabase(): void {
@@ -700,8 +709,8 @@ export function updateTaskAfterRun(
 export function logTaskRun(log: TaskRunLog): void {
   db.prepare(
     `
-    INSERT INTO task_run_logs (task_id, run_at, duration_ms, status, result, error)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO task_run_logs (task_id, run_at, duration_ms, status, result, error, input_tokens, output_tokens, total_cost_usd)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
   ).run(
     log.task_id,
@@ -710,6 +719,9 @@ export function logTaskRun(log: TaskRunLog): void {
     log.status,
     log.result,
     log.error,
+    log.input_tokens ?? null,
+    log.output_tokens ?? null,
+    log.total_cost_usd ?? null,
   );
 }
 

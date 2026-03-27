@@ -98,6 +98,9 @@ async function runTask(
       status: 'error',
       result: null,
       error,
+      input_tokens: null,
+      output_tokens: null,
+      total_cost_usd: null,
     });
     return;
   }
@@ -125,6 +128,9 @@ async function runTask(
       status: 'error',
       result: null,
       error: `Group not found: ${task.group_folder}`,
+      input_tokens: null,
+      output_tokens: null,
+      total_cost_usd: null,
     });
     return;
   }
@@ -148,6 +154,9 @@ async function runTask(
 
   let result: string | null = null;
   let error: string | null = null;
+  let inputTokens: number | null = null;
+  let outputTokens: number | null = null;
+  let totalCostUsd: number | null = null;
 
   // For group context mode, use the group's current session
   const sessions = deps.getSessions();
@@ -196,6 +205,13 @@ async function runTask(
         if (streamedOutput.status === 'error') {
           error = streamedOutput.error || 'Unknown error';
         }
+        if (streamedOutput.usage) {
+          inputTokens = (inputTokens ?? 0) + (streamedOutput.usage.input_tokens ?? 0);
+          outputTokens = (outputTokens ?? 0) + (streamedOutput.usage.output_tokens ?? 0);
+        }
+        if (streamedOutput.total_cost_usd !== undefined) {
+          totalCostUsd = (totalCostUsd ?? 0) + streamedOutput.total_cost_usd;
+        }
       },
     );
 
@@ -227,6 +243,9 @@ async function runTask(
     status: error ? 'error' : 'success',
     result,
     error,
+    input_tokens: inputTokens,
+    output_tokens: outputTokens,
+    total_cost_usd: totalCostUsd,
   });
 
   const nextRun = computeNextRun(task);

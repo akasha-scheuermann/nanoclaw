@@ -46,6 +46,13 @@ interface ContainerOutput {
   result: string | null;
   newSessionId?: string;
   error?: string;
+  usage?: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
+  };
+  total_cost_usd?: number;
 }
 
 interface SessionEntry {
@@ -543,11 +550,22 @@ async function runQuery(
     if (message.type === 'result') {
       resultCount++;
       const textResult = 'result' in message ? (message as { result?: string }).result : null;
-      log(`Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`);
+      const msgAny = message as {
+        usage?: {
+          input_tokens?: number;
+          output_tokens?: number;
+          cache_creation_input_tokens?: number;
+          cache_read_input_tokens?: number;
+        };
+        total_cost_usd?: number;
+      };
+      log(`Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}${msgAny.usage ? ` in=${msgAny.usage.input_tokens} out=${msgAny.usage.output_tokens}` : ''}`);
       writeOutput({
         status: 'success',
         result: textResult || null,
-        newSessionId
+        newSessionId,
+        ...(msgAny.usage ? { usage: msgAny.usage } : {}),
+        ...(msgAny.total_cost_usd !== undefined ? { total_cost_usd: msgAny.total_cost_usd } : {}),
       });
     }
   }
