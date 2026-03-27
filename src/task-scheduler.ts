@@ -218,13 +218,16 @@ async function runTask(
         }
         if (streamedOutput.modelUsage) {
           if (!accModelUsage) accModelUsage = {};
-          for (const [modelKey, usage] of Object.entries(streamedOutput.modelUsage)) {
+          for (const [modelKey, usage] of Object.entries(
+            streamedOutput.modelUsage,
+          )) {
             const u = usage as Record<string, number>;
             if (!accModelUsage[modelKey]) {
               accModelUsage[modelKey] = { ...u };
             } else {
               for (const field of Object.keys(u)) {
-                accModelUsage[modelKey][field] = (accModelUsage[modelKey][field] ?? 0) + (u[field] ?? 0);
+                accModelUsage[modelKey][field] =
+                  (accModelUsage[modelKey][field] ?? 0) + (u[field] ?? 0);
               }
             }
           }
