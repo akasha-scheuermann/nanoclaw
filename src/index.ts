@@ -39,6 +39,7 @@ import {
   getNewMessages,
   getRouterState,
   initDatabase,
+  logTokenUsage,
   setRegisteredGroup,
   setRouterState,
   setSession,
@@ -361,6 +362,17 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         delete cursorBeforePipe[chatJid];
         saveState();
         queue.notifyIdle(chatJid);
+      }
+
+      if (result.status === 'success' && (result.usage || result.total_cost_usd !== undefined)) {
+        logTokenUsage({
+          chat_jid: chatJid,
+          group_folder: group.folder,
+          timestamp: new Date().toISOString(),
+          input_tokens: result.usage?.input_tokens ?? null,
+          output_tokens: result.usage?.output_tokens ?? null,
+          total_cost_usd: result.total_cost_usd ?? null,
+        });
       }
 
       if (result.status === 'error') {

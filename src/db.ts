@@ -139,6 +139,18 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_work_items_folder ON agent_work_items(group_folder);
     CREATE INDEX IF NOT EXISTS idx_work_items_status ON agent_work_items(status);
+
+    CREATE TABLE IF NOT EXISTS token_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      chat_jid TEXT NOT NULL,
+      group_folder TEXT NOT NULL,
+      timestamp TEXT NOT NULL,
+      input_tokens INTEGER,
+      output_tokens INTEGER,
+      total_cost_usd REAL
+    );
+    CREATE INDEX IF NOT EXISTS idx_token_logs_chat ON token_logs(chat_jid, timestamp);
+    CREATE INDEX IF NOT EXISTS idx_token_logs_group ON token_logs(group_folder, timestamp);
   `);
 
   // Add context_mode column if it doesn't exist (migration for existing DBs)
@@ -722,6 +734,29 @@ export function logTaskRun(log: TaskRunLog): void {
     log.input_tokens ?? null,
     log.output_tokens ?? null,
     log.total_cost_usd ?? null,
+  );
+}
+
+export function logTokenUsage(log: {
+  chat_jid: string;
+  group_folder: string;
+  timestamp: string;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  total_cost_usd: number | null;
+}): void {
+  db.prepare(
+    `
+    INSERT INTO token_logs (chat_jid, group_folder, timestamp, input_tokens, output_tokens, total_cost_usd)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `,
+  ).run(
+    log.chat_jid,
+    log.group_folder,
+    log.timestamp,
+    log.input_tokens,
+    log.output_tokens,
+    log.total_cost_usd,
   );
 }
 
