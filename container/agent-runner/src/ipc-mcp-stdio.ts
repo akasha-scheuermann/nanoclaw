@@ -16,6 +16,8 @@ const MESSAGES_DIR = path.join(IPC_DIR, 'messages');
 const TASKS_DIR = path.join(IPC_DIR, 'tasks');
 const AGENT_REQUESTS_DIR = path.join(IPC_DIR, 'agent_requests');
 const AGENT_RESPONSES_DIR = path.join(IPC_DIR, 'agent_responses');
+const WORK_ITEM_RESPONSES_DIR = path.join(IPC_DIR, 'work_item_responses');
+const REACTION_RESPONSES_DIR = path.join(IPC_DIR, 'reaction_responses');
 
 // Context from environment variables (set by the agent runner)
 const chatJid = process.env.NANOCLAW_CHAT_JID!;
@@ -493,6 +495,339 @@ server.tool(
 
     return {
       content: [{ type: 'text' as const, text: `Error: Agent call timed out after ${args.timeout || 120_000}ms. The target agent may still be processing.` }]
+    };
+  },
+);
+
+server.tool(
+  'create_work_item',
+  `Add a new item to this agent's work queue. Call this at the START of an initiative loop session to register the work you are about to do.
+
+Items flow through statuses: queued → in_progress → done (or blocked/deferred).
+The host enforces WIP limits — you cannot move an item to in_progress if you are already at your limit.
+
+source examples: "initiative_loop", "manual", "vault:path/to/project.md"`,
+  {
+    title: z.string().describe('Short title for the work item (1 line)'),
+    description: z
+      .string()
+      .optional()
+      .describe('Longer description of the work to be done'),
+    priority: z
+      .number()
+      .optional()
+      .describe('Priority 0–100, higher = more urgent. Default: 50'),
+    source: z
+      .string()
+      .optional()
+      .describe(
+        'Where this work came from (e.g. "initiative_loop", "vault:path/to/project.md")',
+      ),
+    reasoning: z
+      .string()
+      .optional()
+      .describe('Why you chose this work item this session'),
+  },
+  async (args) => {
+    fs.mkdirSync(WORK_ITEM_RESPONSES_DIR, { recursive: true });
+
+    const requestId = `wi-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const data = {
+      type: 'create_work_item',
+      requestId,
+      workItemTitle: args.title,
+      workItemDescription: args.description,
+      workItemPriority: args.priority,
+      workItemSource: args.source,
+      workItemReasoning: args.reasoning,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    const respPath = path.join(WORK_ITEM_RESPONSES_DIR, `${requestId}.json`);
+    const deadline = Date.now() + 10_000;
+    const POLL_INTERVAL = 200;
+
+    while (Date.now() < deadline) {
+      if (fs.existsSync(respPath)) {
+        const result = JSON.parse(fs.readFileSync(respPath, 'utf-8'));
+        fs.unlinkSync(respPath);
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: result.success
+                ? `Work item created (id: ${result.id})`
+                : `Failed: ${result.error}`,
+            },
+          ],
+          isError: !result.success,
+        };
+      }
+      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL));
+    }
+
+    return {
+      content: [{ type: 'text' as const, text: 'Timed out waiting for work item creation.' }],
+      isError: true,
+    };
+  },
+);
+
+server.tool(
+  'update_work_item',
+  `Update the status or details of a work item. Use this to transition items through their lifecycle:
+- queued → in_progress (when starting work; WIP limit enforced by host)
+- in_progress → done (when work is complete; include outcome)
+- in_progress → blocked (when you cannot proceed; include blocked_reason)
+- in_progress → deferred (when deprioritizing)
+
+Always set outcome when marking done. Always set blocked_reason when marking blocked.`,
+  {
+    id: z.number().describe('The work item ID (from create_work_item or list_work_items)'),
+    status: z
+      .enum(['queued', 'in_progress', 'done', 'blocked', 'deferred'])
+      .optional()
+      .describe('New status'),
+    outcome: z
+      .string()
+      .optional()
+      .describe('What was produced or accomplished (set when marking done)'),
+    blocked_reason: z
+      .string()
+      .optional()
+      .describe('Why work is blocked (set when marking blocked)'),
+    reasoning: z.string().optional().describe('Updated reasoning notes'),
+  },
+  async (args) => {
+    fs.mkdirSync(WORK_ITEM_RESPONSES_DIR, { recursive: true });
+
+    const requestId = `wi-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const data = {
+      type: 'update_work_item',
+      requestId,
+      workItemId: args.id,
+      workItemStatus: args.status,
+      workItemOutcome: args.outcome,
+      workItemBlockedReason: args.blocked_reason,
+      workItemReasoning: args.reasoning,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    const respPath = path.join(WORK_ITEM_RESPONSES_DIR, `${requestId}.json`);
+    const deadline = Date.now() + 10_000;
+    const POLL_INTERVAL = 200;
+
+    while (Date.now() < deadline) {
+      if (fs.existsSync(respPath)) {
+        const result = JSON.parse(fs.readFileSync(respPath, 'utf-8'));
+        fs.unlinkSync(respPath);
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: result.success
+                ? `Work item ${args.id} updated.`
+                : `Failed: ${result.error}`,
+            },
+          ],
+          isError: !result.success,
+        };
+      }
+      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL));
+    }
+
+    return {
+      content: [{ type: 'text' as const, text: 'Timed out waiting for work item update.' }],
+      isError: true,
+    };
+  },
+);
+
+server.tool(
+  'list_work_items',
+  "List this agent's work queue. Use at the start of an initiative loop session to check current WIP and backlog before selecting new work.",
+  {
+    status_filter: z
+      .array(z.enum(['queued', 'in_progress', 'done', 'blocked', 'deferred']))
+      .optional()
+      .describe(
+        'Filter by status. Omit to see all items. Tip: use ["queued","in_progress","blocked"] to see active work.',
+      ),
+  },
+  async (args) => {
+    fs.mkdirSync(WORK_ITEM_RESPONSES_DIR, { recursive: true });
+
+    const requestId = `wi-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const data = {
+      type: 'list_work_items',
+      requestId,
+      workItemStatusFilter: args.status_filter,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    const respPath = path.join(WORK_ITEM_RESPONSES_DIR, `${requestId}.json`);
+    const deadline = Date.now() + 10_000;
+    const POLL_INTERVAL = 200;
+
+    while (Date.now() < deadline) {
+      if (fs.existsSync(respPath)) {
+        const result = JSON.parse(fs.readFileSync(respPath, 'utf-8'));
+        fs.unlinkSync(respPath);
+        if (!result.success) {
+          return {
+            content: [{ type: 'text' as const, text: `Failed: ${result.error}` }],
+            isError: true,
+          };
+        }
+        if (result.items.length === 0) {
+          return {
+            content: [{ type: 'text' as const, text: 'No work items found.' }],
+          };
+        }
+        const formatted = result.items
+          .map(
+            (item: {
+              id: number;
+              title: string;
+              status: string;
+              priority: number;
+              source: string | null;
+              reasoning: string | null;
+              outcome: string | null;
+              blocked_reason: string | null;
+              created_at: number;
+            }) => {
+              const lines = [
+                `[${item.id}] ${item.title} — ${item.status} (priority: ${item.priority})`,
+              ];
+              if (item.source) lines.push(`  source: ${item.source}`);
+              if (item.reasoning) lines.push(`  reasoning: ${item.reasoning}`);
+              if (item.outcome) lines.push(`  outcome: ${item.outcome}`);
+              if (item.blocked_reason) lines.push(`  blocked: ${item.blocked_reason}`);
+              return lines.join('\n');
+            },
+          )
+          .join('\n\n');
+        return {
+          content: [{ type: 'text' as const, text: `Work items:\n\n${formatted}` }],
+        };
+      }
+      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL));
+    }
+
+    return {
+      content: [{ type: 'text' as const, text: 'Timed out waiting for work item list.' }],
+      isError: true,
+    };
+  },
+);
+
+server.tool(
+  'get_reaction_summary',
+  `Get a summary of reactions on your recent messages. Use this at the start of an initiative loop session to assess quality and calibrate your approach.
+
+Returns two views:
+- summary: reaction counts grouped by emoji, with sample message snippets showing what resonated (or didn't)
+- recent: the most recent individual reactions in chronological order
+
+Interpret signals:
+- ❤️ / 👍 = positive, keep doing this
+- 👎 = something didn't land — read the message snippet and reflect
+- No reactions = neutral (common for background tasks that ran silently)
+
+Use findings to inform your work selection and approach this session.`,
+  {
+    days: z
+      .number()
+      .optional()
+      .describe('How many days to look back (default: 30)'),
+    limit: z
+      .number()
+      .optional()
+      .describe('Max recent reactions to return (default: 20)'),
+  },
+  async (args) => {
+    fs.mkdirSync(REACTION_RESPONSES_DIR, { recursive: true });
+
+    const requestId = `rxn-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const data = {
+      type: 'get_reaction_summary',
+      requestId,
+      reactionDays: args.days,
+      reactionLimit: args.limit,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    const respPath = path.join(REACTION_RESPONSES_DIR, `${requestId}.json`);
+    const deadline = Date.now() + 10_000;
+    const POLL_INTERVAL = 200;
+
+    while (Date.now() < deadline) {
+      if (fs.existsSync(respPath)) {
+        const result = JSON.parse(fs.readFileSync(respPath, 'utf-8'));
+        fs.unlinkSync(respPath);
+
+        if (!result.success) {
+          return {
+            content: [{ type: 'text' as const, text: `Failed: ${result.error}` }],
+            isError: true,
+          };
+        }
+
+        const lines: string[] = [];
+
+        if (result.summary.length === 0) {
+          lines.push('No reactions found in the specified window.');
+        } else {
+          lines.push('*Reaction summary:*');
+          for (const entry of result.summary as Array<{
+            emoji: string;
+            count: number;
+            last_seen: string;
+            sample_messages: string[];
+          }>) {
+            lines.push(`\n${entry.emoji}  ×${entry.count}  (last: ${entry.last_seen.slice(0, 10)})`);
+            for (const snippet of entry.sample_messages) {
+              lines.push(`  → "${snippet.trim()}"`);
+            }
+          }
+        }
+
+        if (result.recent && result.recent.length > 0) {
+          lines.push('\n*Recent reactions:*');
+          for (const r of result.recent as Array<{
+            emoji: string;
+            reactor_name: string | null;
+            timestamp: string;
+            message_snippet: string;
+          }>) {
+            const who = r.reactor_name || 'unknown';
+            lines.push(`${r.emoji} ${who} — "${r.message_snippet.trim()}" (${r.timestamp.slice(0, 10)})`);
+          }
+        }
+
+        return {
+          content: [{ type: 'text' as const, text: lines.join('\n') }],
+        };
+      }
+      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL));
+    }
+
+    return {
+      content: [{ type: 'text' as const, text: 'Timed out waiting for reaction summary.' }],
+      isError: true,
     };
   },
 );

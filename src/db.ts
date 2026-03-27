@@ -23,6 +23,22 @@ export interface Reaction {
   timestamp: string;
 }
 
+export interface WorkItem {
+  id: number;
+  group_folder: string;
+  title: string;
+  description: string | null;
+  status: 'queued' | 'in_progress' | 'done' | 'blocked' | 'deferred';
+  priority: number;
+  source: string | null;
+  created_at: number;
+  started_at: number | null;
+  completed_at: number | null;
+  reasoning: string | null;
+  outcome: string | null;
+  blocked_reason: string | null;
+}
+
 function createSchema(database: Database.Database): void {
   database.exec(`
     CREATE TABLE IF NOT EXISTS chats (
@@ -105,6 +121,24 @@ function createSchema(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_reactions_reactor ON reactions(reactor_jid);
     CREATE INDEX IF NOT EXISTS idx_reactions_emoji ON reactions(emoji);
     CREATE INDEX IF NOT EXISTS idx_reactions_timestamp ON reactions(timestamp);
+
+    CREATE TABLE IF NOT EXISTS agent_work_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_folder TEXT NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT,
+      status TEXT NOT NULL DEFAULT 'queued',
+      priority INTEGER DEFAULT 50,
+      source TEXT,
+      created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+      started_at INTEGER,
+      completed_at INTEGER,
+      reasoning TEXT,
+      outcome TEXT,
+      blocked_reason TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_work_items_folder ON agent_work_items(group_folder);
+    CREATE INDEX IF NOT EXISTS idx_work_items_status ON agent_work_items(status);
   `);
 
   // Add context_mode column if it doesn't exist (migration for existing DBs)
@@ -168,6 +202,15 @@ function createSchema(database: Database.Database): void {
   try {
     database.exec(
       `ALTER TABLE registered_groups ADD COLUMN is_main INTEGER DEFAULT 0`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
+  // Add wip_limit column if it doesn't exist (migration for initiative loop)
+  try {
+    database.exec(
+      `ALTER TABLE registered_groups ADD COLUMN wip_limit INTEGER DEFAULT 2`,
     );
   } catch {
     /* column already exists */
@@ -811,6 +854,244 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
     };
   }
   return result;
+}
+
+// --- Reaction summary for agent self-review ---
+
+export interface ReactionSummaryEntry {
+  emoji: string;
+  count: number;
+  last_seen: string;
+  sample_messages: string[]; // up to 3 message content snippets (first 120 chars)
+}
+
+export interface ReactionOnMessage {
+  emoji: string;
+  reactor_name: string | null;
+  timestamp: string;
+  message_snippet: string;
+}
+
+export function getReactionSummaryForGroup(
+  chatJid: string,
+  days: number = 30,
+  limit: number = 20,
+): { summary: ReactionSummaryEntry[]; recent: ReactionOnMessage[] } {
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
+  // Aggregate by emoji
+  const summaryRows = db
+    .prepare(
+      `SELECT r.emoji,
+              COUNT(*) as count,
+              MAX(r.timestamp) as last_seen
+       FROM reactions r
+       JOIN messages m ON r.message_id = m.id AND r.message_chat_jid = m.chat_jid
+       WHERE m.chat_jid = ? AND m.is_bot_message = 1 AND r.timestamp > ?
+       GROUP BY r.emoji
+       ORDER BY count DESC`,
+    )
+    .all(chatJid, since) as Array<{
+    emoji: string;
+    count: number;
+    last_seen: string;
+  }>;
+
+  // Sample messages per emoji (up to 3 per emoji)
+  const summary: ReactionSummaryEntry[] = summaryRows.map((row) => {
+    const samples = db
+      .prepare(
+        `SELECT SUBSTR(m.content, 1, 120) as snippet
+         FROM reactions r
+         JOIN messages m ON r.message_id = m.id AND r.message_chat_jid = m.chat_jid
+         WHERE m.chat_jid = ? AND m.is_bot_message = 1
+           AND r.emoji = ? AND r.timestamp > ?
+         ORDER BY r.timestamp DESC
+         LIMIT 3`,
+      )
+      .all(chatJid, row.emoji, since) as Array<{ snippet: string }>;
+    return {
+      emoji: row.emoji,
+      count: row.count,
+      last_seen: row.last_seen,
+      sample_messages: samples.map((s) => s.snippet),
+    };
+  });
+
+  // Most recent individual reactions (for the detailed view)
+  const recent = db
+    .prepare(
+      `SELECT r.emoji, r.reactor_name, r.timestamp,
+              SUBSTR(m.content, 1, 120) as message_snippet
+       FROM reactions r
+       JOIN messages m ON r.message_id = m.id AND r.message_chat_jid = m.chat_jid
+       WHERE m.chat_jid = ? AND m.is_bot_message = 1 AND r.timestamp > ?
+       ORDER BY r.timestamp DESC
+       LIMIT ?`,
+    )
+    .all(chatJid, since, limit) as ReactionOnMessage[];
+
+  return { summary, recent };
+}
+
+// --- Work item accessors ---
+
+export function createWorkItem(
+  item: Omit<WorkItem, 'id' | 'created_at'>,
+): number {
+  const result = db
+    .prepare(
+      `INSERT INTO agent_work_items
+        (group_folder, title, description, status, priority, source, reasoning)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      item.group_folder,
+      item.title,
+      item.description ?? null,
+      item.status,
+      item.priority ?? 50,
+      item.source ?? null,
+      item.reasoning ?? null,
+    );
+  return result.lastInsertRowid as number;
+}
+
+export function getWorkItem(id: number): WorkItem | undefined {
+  return db.prepare('SELECT * FROM agent_work_items WHERE id = ?').get(id) as
+    | WorkItem
+    | undefined;
+}
+
+export function listWorkItems(
+  groupFolder: string | null,
+  statusFilter?: string[],
+): WorkItem[] {
+  let sql = 'SELECT * FROM agent_work_items';
+  const params: unknown[] = [];
+  const conditions: string[] = [];
+
+  if (groupFolder) {
+    conditions.push('group_folder = ?');
+    params.push(groupFolder);
+  }
+  if (statusFilter && statusFilter.length > 0) {
+    const placeholders = statusFilter.map(() => '?').join(', ');
+    conditions.push(`status IN (${placeholders})`);
+    params.push(...statusFilter);
+  }
+  if (conditions.length > 0) {
+    sql += ` WHERE ${conditions.join(' AND ')}`;
+  }
+  sql += ' ORDER BY priority DESC, created_at ASC';
+
+  return db.prepare(sql).all(...params) as WorkItem[];
+}
+
+export function getWipCount(groupFolder: string): number {
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) as count FROM agent_work_items
+       WHERE group_folder = ? AND status = 'in_progress'`,
+    )
+    .get(groupFolder) as { count: number };
+  return row.count;
+}
+
+export function getWipLimit(groupFolder: string): number {
+  const row = db
+    .prepare(`SELECT wip_limit FROM registered_groups WHERE folder = ?`)
+    .get(groupFolder) as { wip_limit: number | null } | undefined;
+  return row?.wip_limit ?? 2;
+}
+
+export function updateWorkItem(
+  id: number,
+  updates: Partial<
+    Pick<
+      WorkItem,
+      | 'status'
+      | 'title'
+      | 'description'
+      | 'priority'
+      | 'reasoning'
+      | 'outcome'
+      | 'blocked_reason'
+    >
+  >,
+  sourceGroup: string,
+  isMain: boolean,
+): { success: boolean; error?: string } {
+  const item = getWorkItem(id);
+  if (!item) {
+    return { success: false, error: `Work item ${id} not found` };
+  }
+  if (!isMain && item.group_folder !== sourceGroup) {
+    return {
+      success: false,
+      error: `Unauthorized: item ${id} belongs to ${item.group_folder}`,
+    };
+  }
+
+  // WIP limit enforcement: block transition to in_progress if at limit
+  if (updates.status === 'in_progress' && item.status !== 'in_progress') {
+    const wipCount = getWipCount(item.group_folder);
+    const wipLimit = getWipLimit(item.group_folder);
+    if (wipCount >= wipLimit) {
+      return {
+        success: false,
+        error: `WIP limit reached (${wipCount}/${wipLimit}). Complete or defer an in-progress item first.`,
+      };
+    }
+  }
+
+  const fields: string[] = [];
+  const values: unknown[] = [];
+
+  if (updates.status !== undefined) {
+    fields.push('status = ?');
+    values.push(updates.status);
+    if (updates.status === 'in_progress') {
+      fields.push('started_at = ?');
+      values.push(Math.floor(Date.now() / 1000));
+    }
+    if (updates.status === 'done' || updates.status === 'deferred') {
+      fields.push('completed_at = ?');
+      values.push(Math.floor(Date.now() / 1000));
+    }
+  }
+  if (updates.title !== undefined) {
+    fields.push('title = ?');
+    values.push(updates.title);
+  }
+  if (updates.description !== undefined) {
+    fields.push('description = ?');
+    values.push(updates.description);
+  }
+  if (updates.priority !== undefined) {
+    fields.push('priority = ?');
+    values.push(updates.priority);
+  }
+  if (updates.reasoning !== undefined) {
+    fields.push('reasoning = ?');
+    values.push(updates.reasoning);
+  }
+  if (updates.outcome !== undefined) {
+    fields.push('outcome = ?');
+    values.push(updates.outcome);
+  }
+  if (updates.blocked_reason !== undefined) {
+    fields.push('blocked_reason = ?');
+    values.push(updates.blocked_reason);
+  }
+
+  if (fields.length === 0) return { success: true };
+
+  values.push(id);
+  db.prepare(
+    `UPDATE agent_work_items SET ${fields.join(', ')} WHERE id = ?`,
+  ).run(...values);
+  return { success: true };
 }
 
 // --- JSON migration ---
