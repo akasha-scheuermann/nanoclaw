@@ -6,7 +6,15 @@ import { CronExpressionParser } from 'cron-parser';
 
 import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
 import { AvailableGroup, runContainerAgent } from './container-runner.js';
-import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
+import {
+  createTask,
+  createWorkItem,
+  deleteTask,
+  getTaskById,
+  listWorkItems,
+  updateTask,
+  updateWorkItem,
+} from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import { McpBridge } from './mcp-bridge.js';
@@ -322,6 +330,17 @@ export async function processTaskIpc(
     requestId?: string;
     // For snapshot_groups
     message?: string;
+    // For work items
+    workItemId?: number;
+    workItemTitle?: string;
+    workItemDescription?: string;
+    workItemStatus?: string;
+    workItemPriority?: number;
+    workItemSource?: string;
+    workItemReasoning?: string;
+    workItemOutcome?: string;
+    workItemBlockedReason?: string;
+    workItemStatusFilter?: string[];
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
@@ -761,6 +780,72 @@ export async function processTaskIpc(
           );
         }
       }
+      break;
+    }
+
+    case 'create_work_item': {
+      if (!data.workItemTitle || !data.requestId) break;
+      const folder = isMain && data.groupFolder ? data.groupFolder : sourceGroup;
+      const newId = createWorkItem({
+        group_folder: folder,
+        title: data.workItemTitle,
+        description: data.workItemDescription ?? null,
+        status: 'queued',
+        priority: data.workItemPriority ?? 50,
+        source: data.workItemSource ?? null,
+        started_at: null,
+        completed_at: null,
+        reasoning: data.workItemReasoning ?? null,
+        outcome: null,
+        blocked_reason: null,
+      });
+      logger.info({ id: newId, folder, title: data.workItemTitle }, 'Work item created via IPC');
+      const wiResponseDir = path.join(DATA_DIR, 'ipc', sourceGroup, 'work_item_responses');
+      fs.mkdirSync(wiResponseDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(wiResponseDir, `${data.requestId}.json`),
+        JSON.stringify({ success: true, id: newId }),
+      );
+      break;
+    }
+
+    case 'update_work_item': {
+      if (data.workItemId == null || !data.requestId) break;
+      const wiUpdateResponseDir = path.join(DATA_DIR, 'ipc', sourceGroup, 'work_item_responses');
+      fs.mkdirSync(wiUpdateResponseDir, { recursive: true });
+
+      const updates: Parameters<typeof updateWorkItem>[1] = {};
+      if (data.workItemStatus !== undefined)
+        updates.status = data.workItemStatus as Parameters<typeof updateWorkItem>[1]['status'];
+      if (data.workItemTitle !== undefined) updates.title = data.workItemTitle;
+      if (data.workItemDescription !== undefined) updates.description = data.workItemDescription;
+      if (data.workItemPriority !== undefined) updates.priority = data.workItemPriority;
+      if (data.workItemReasoning !== undefined) updates.reasoning = data.workItemReasoning;
+      if (data.workItemOutcome !== undefined) updates.outcome = data.workItemOutcome;
+      if (data.workItemBlockedReason !== undefined) updates.blocked_reason = data.workItemBlockedReason;
+
+      const result = updateWorkItem(data.workItemId, updates, sourceGroup, isMain);
+      logger.info(
+        { id: data.workItemId, sourceGroup, success: result.success },
+        'Work item update via IPC',
+      );
+      fs.writeFileSync(
+        path.join(wiUpdateResponseDir, `${data.requestId}.json`),
+        JSON.stringify(result),
+      );
+      break;
+    }
+
+    case 'list_work_items': {
+      if (!data.requestId) break;
+      const folder = isMain ? (data.groupFolder ?? null) : sourceGroup;
+      const items = listWorkItems(folder, data.workItemStatusFilter);
+      const wiListResponseDir = path.join(DATA_DIR, 'ipc', sourceGroup, 'work_item_responses');
+      fs.mkdirSync(wiListResponseDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(wiListResponseDir, `${data.requestId}.json`),
+        JSON.stringify({ success: true, items }),
+      );
       break;
     }
 
