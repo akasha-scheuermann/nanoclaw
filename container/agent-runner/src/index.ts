@@ -501,6 +501,7 @@ async function runQuery(
         'mcp__nanoclaw__*',
         ...(process.env.PLEX_TOKEN && process.env.PLEX_URL ? ['mcp__plex__*'] : []),
         ...(process.env.FASTMAIL_API_TOKEN ? ['mcp__fastmail__*'] : []),
+        'mcp__ollama__*',
       ],
       disallowedTools: getBlockedMcpTools(),
       env: sdkEnv,
@@ -546,6 +547,10 @@ async function runQuery(
               },
             }
           : {}),
+        ollama: {
+          command: 'node',
+          args: [path.join(path.dirname(mcpServerPath), 'ollama-mcp-stdio.js')],
+        },
       },
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
