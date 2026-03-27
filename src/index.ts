@@ -364,7 +364,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         queue.notifyIdle(chatJid);
       }
 
-      if (result.status === 'success' && (result.usage || result.total_cost_usd !== undefined)) {
+      if (
+        result.status === 'success' &&
+        (result.usage || result.total_cost_usd !== undefined)
+      ) {
         logTokenUsage({
           chat_jid: chatJid,
           group_folder: group.folder,

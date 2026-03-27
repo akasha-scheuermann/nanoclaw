@@ -206,8 +206,10 @@ async function runTask(
           error = streamedOutput.error || 'Unknown error';
         }
         if (streamedOutput.usage) {
-          inputTokens = (inputTokens ?? 0) + (streamedOutput.usage.input_tokens ?? 0);
-          outputTokens = (outputTokens ?? 0) + (streamedOutput.usage.output_tokens ?? 0);
+          inputTokens =
+            (inputTokens ?? 0) + (streamedOutput.usage.input_tokens ?? 0);
+          outputTokens =
+            (outputTokens ?? 0) + (streamedOutput.usage.output_tokens ?? 0);
         }
         if (streamedOutput.total_cost_usd !== undefined) {
           totalCostUsd = (totalCostUsd ?? 0) + streamedOutput.total_cost_usd;
