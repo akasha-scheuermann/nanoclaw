@@ -295,7 +295,11 @@ function buildVolumeMounts(
   // Additional mounts validated against external allowlist (tamper-proof from containers)
   if (group.containerConfig?.additionalMounts) {
     const rawMounts = group.containerConfig.additionalMounts;
-    const validatedMounts = validateAdditionalMounts(rawMounts, group.name, isMain);
+    const validatedMounts = validateAdditionalMounts(
+      rawMounts,
+      group.name,
+      isMain,
+    );
 
     // Propagate loadClaudeMd flag from the original mount config.
     // validateAdditionalMounts resolves containerPath to a short name (e.g. "vault");
@@ -347,7 +351,10 @@ async function buildContainerArgs(
     .filter((m) => m.loadClaudeMd === false)
     .map((m) => m.containerPath);
   if (skipClaudeMdDirs.length > 0) {
-    args.push('-e', `NANOCLAW_SKIP_CLAUDE_MD_DIRS=${JSON.stringify(skipClaudeMdDirs)}`);
+    args.push(
+      '-e',
+      `NANOCLAW_SKIP_CLAUDE_MD_DIRS=${JSON.stringify(skipClaudeMdDirs)}`,
+    );
   }
 
   // OneCLI gateway handles credential injection — containers never see real secrets.

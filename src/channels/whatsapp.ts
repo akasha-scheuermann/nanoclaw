@@ -30,6 +30,56 @@ import {
 } from '../db.js';
 import { isImageMessage, processImage } from '../image.js';
 import { logger } from '../logger.js';
+import type { ILogger } from '@whiskeysockets/baileys/lib/Utils/logger.js';
+
+// Baileys expects a pino-compatible logger with level, child(), and trace().
+// Wrap our built-in logger to satisfy the ILogger interface.
+const baileysLogger: ILogger = {
+  level: 'warn',
+  child(_obj: Record<string, unknown>): ILogger {
+    return baileysLogger;
+  },
+  trace(obj: unknown, msg?: string) {
+    logger.debug(
+      typeof obj === 'object' && obj
+        ? (obj as Record<string, unknown>)
+        : { data: obj },
+      msg,
+    );
+  },
+  debug(obj: unknown, msg?: string) {
+    logger.debug(
+      typeof obj === 'object' && obj
+        ? (obj as Record<string, unknown>)
+        : { data: obj },
+      msg,
+    );
+  },
+  info(obj: unknown, msg?: string) {
+    logger.info(
+      typeof obj === 'object' && obj
+        ? (obj as Record<string, unknown>)
+        : { data: obj },
+      msg,
+    );
+  },
+  warn(obj: unknown, msg?: string) {
+    logger.warn(
+      typeof obj === 'object' && obj
+        ? (obj as Record<string, unknown>)
+        : { data: obj },
+      msg,
+    );
+  },
+  error(obj: unknown, msg?: string) {
+    logger.error(
+      typeof obj === 'object' && obj
+        ? (obj as Record<string, unknown>)
+        : { data: obj },
+      msg,
+    );
+  },
+};
 import {
   Channel,
   OnInboundMessage,
@@ -102,10 +152,10 @@ export class WhatsAppChannel implements Channel {
       version,
       auth: {
         creds: state.creds,
-        keys: makeCacheableSignalKeyStore(state.keys, logger),
+        keys: makeCacheableSignalKeyStore(state.keys, baileysLogger),
       },
       printQRInTerminal: false,
-      logger,
+      logger: baileysLogger,
       browser: Browsers.macOS('Chrome'),
     });
 
