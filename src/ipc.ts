@@ -785,7 +785,8 @@ export async function processTaskIpc(
 
     case 'create_work_item': {
       if (!data.workItemTitle || !data.requestId) break;
-      const folder = isMain && data.groupFolder ? data.groupFolder : sourceGroup;
+      const folder =
+        isMain && data.groupFolder ? data.groupFolder : sourceGroup;
       const newId = createWorkItem({
         group_folder: folder,
         title: data.workItemTitle,
@@ -799,8 +800,16 @@ export async function processTaskIpc(
         outcome: null,
         blocked_reason: null,
       });
-      logger.info({ id: newId, folder, title: data.workItemTitle }, 'Work item created via IPC');
-      const wiResponseDir = path.join(DATA_DIR, 'ipc', sourceGroup, 'work_item_responses');
+      logger.info(
+        { id: newId, folder, title: data.workItemTitle },
+        'Work item created via IPC',
+      );
+      const wiResponseDir = path.join(
+        DATA_DIR,
+        'ipc',
+        sourceGroup,
+        'work_item_responses',
+      );
       fs.mkdirSync(wiResponseDir, { recursive: true });
       fs.writeFileSync(
         path.join(wiResponseDir, `${data.requestId}.json`),
@@ -811,20 +820,37 @@ export async function processTaskIpc(
 
     case 'update_work_item': {
       if (data.workItemId == null || !data.requestId) break;
-      const wiUpdateResponseDir = path.join(DATA_DIR, 'ipc', sourceGroup, 'work_item_responses');
+      const wiUpdateResponseDir = path.join(
+        DATA_DIR,
+        'ipc',
+        sourceGroup,
+        'work_item_responses',
+      );
       fs.mkdirSync(wiUpdateResponseDir, { recursive: true });
 
       const updates: Parameters<typeof updateWorkItem>[1] = {};
       if (data.workItemStatus !== undefined)
-        updates.status = data.workItemStatus as Parameters<typeof updateWorkItem>[1]['status'];
+        updates.status = data.workItemStatus as Parameters<
+          typeof updateWorkItem
+        >[1]['status'];
       if (data.workItemTitle !== undefined) updates.title = data.workItemTitle;
-      if (data.workItemDescription !== undefined) updates.description = data.workItemDescription;
-      if (data.workItemPriority !== undefined) updates.priority = data.workItemPriority;
-      if (data.workItemReasoning !== undefined) updates.reasoning = data.workItemReasoning;
-      if (data.workItemOutcome !== undefined) updates.outcome = data.workItemOutcome;
-      if (data.workItemBlockedReason !== undefined) updates.blocked_reason = data.workItemBlockedReason;
+      if (data.workItemDescription !== undefined)
+        updates.description = data.workItemDescription;
+      if (data.workItemPriority !== undefined)
+        updates.priority = data.workItemPriority;
+      if (data.workItemReasoning !== undefined)
+        updates.reasoning = data.workItemReasoning;
+      if (data.workItemOutcome !== undefined)
+        updates.outcome = data.workItemOutcome;
+      if (data.workItemBlockedReason !== undefined)
+        updates.blocked_reason = data.workItemBlockedReason;
 
-      const result = updateWorkItem(data.workItemId, updates, sourceGroup, isMain);
+      const result = updateWorkItem(
+        data.workItemId,
+        updates,
+        sourceGroup,
+        isMain,
+      );
       logger.info(
         { id: data.workItemId, sourceGroup, success: result.success },
         'Work item update via IPC',
@@ -840,7 +866,12 @@ export async function processTaskIpc(
       if (!data.requestId) break;
       const folder = isMain ? (data.groupFolder ?? null) : sourceGroup;
       const items = listWorkItems(folder, data.workItemStatusFilter);
-      const wiListResponseDir = path.join(DATA_DIR, 'ipc', sourceGroup, 'work_item_responses');
+      const wiListResponseDir = path.join(
+        DATA_DIR,
+        'ipc',
+        sourceGroup,
+        'work_item_responses',
+      );
       fs.mkdirSync(wiListResponseDir, { recursive: true });
       fs.writeFileSync(
         path.join(wiListResponseDir, `${data.requestId}.json`),

@@ -880,9 +880,9 @@ export function createWorkItem(
 }
 
 export function getWorkItem(id: number): WorkItem | undefined {
-  return db
-    .prepare('SELECT * FROM agent_work_items WHERE id = ?')
-    .get(id) as WorkItem | undefined;
+  return db.prepare('SELECT * FROM agent_work_items WHERE id = ?').get(id) as
+    | WorkItem
+    | undefined;
 }
 
 export function listWorkItems(
@@ -956,10 +956,7 @@ export function updateWorkItem(
   }
 
   // WIP limit enforcement: block transition to in_progress if at limit
-  if (
-    updates.status === 'in_progress' &&
-    item.status !== 'in_progress'
-  ) {
+  if (updates.status === 'in_progress' && item.status !== 'in_progress') {
     const wipCount = getWipCount(item.group_folder);
     const wipLimit = getWipLimit(item.group_folder);
     if (wipCount >= wipLimit) {
@@ -985,17 +982,37 @@ export function updateWorkItem(
       values.push(Math.floor(Date.now() / 1000));
     }
   }
-  if (updates.title !== undefined) { fields.push('title = ?'); values.push(updates.title); }
-  if (updates.description !== undefined) { fields.push('description = ?'); values.push(updates.description); }
-  if (updates.priority !== undefined) { fields.push('priority = ?'); values.push(updates.priority); }
-  if (updates.reasoning !== undefined) { fields.push('reasoning = ?'); values.push(updates.reasoning); }
-  if (updates.outcome !== undefined) { fields.push('outcome = ?'); values.push(updates.outcome); }
-  if (updates.blocked_reason !== undefined) { fields.push('blocked_reason = ?'); values.push(updates.blocked_reason); }
+  if (updates.title !== undefined) {
+    fields.push('title = ?');
+    values.push(updates.title);
+  }
+  if (updates.description !== undefined) {
+    fields.push('description = ?');
+    values.push(updates.description);
+  }
+  if (updates.priority !== undefined) {
+    fields.push('priority = ?');
+    values.push(updates.priority);
+  }
+  if (updates.reasoning !== undefined) {
+    fields.push('reasoning = ?');
+    values.push(updates.reasoning);
+  }
+  if (updates.outcome !== undefined) {
+    fields.push('outcome = ?');
+    values.push(updates.outcome);
+  }
+  if (updates.blocked_reason !== undefined) {
+    fields.push('blocked_reason = ?');
+    values.push(updates.blocked_reason);
+  }
 
   if (fields.length === 0) return { success: true };
 
   values.push(id);
-  db.prepare(`UPDATE agent_work_items SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+  db.prepare(
+    `UPDATE agent_work_items SET ${fields.join(', ')} WHERE id = ?`,
+  ).run(...values);
   return { success: true };
 }
 
