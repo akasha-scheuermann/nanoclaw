@@ -443,14 +443,35 @@ async function runQuery(
   }
 
   // Discover additional directories mounted at /workspace/extra/*
-  // These are passed to the SDK so their CLAUDE.md files are loaded automatically
+  // These are passed to the SDK so their CLAUDE.md files are loaded automatically.
+  // Mounts configured with loadClaudeMd: false in container_config are excluded via
+  // NANOCLAW_SKIP_CLAUDE_MD_DIRS (a JSON array of full container paths to skip).
+  const skipClaudeMdDirs = new Set<string>();
+  const skipEnv = process.env.NANOCLAW_SKIP_CLAUDE_MD_DIRS;
+  if (skipEnv) {
+    try {
+      const parsed = JSON.parse(skipEnv);
+      if (Array.isArray(parsed)) {
+        for (const dir of parsed) {
+          if (typeof dir === 'string') skipClaudeMdDirs.add(dir);
+        }
+      }
+    } catch {
+      log(`Warning: failed to parse NANOCLAW_SKIP_CLAUDE_MD_DIRS: ${skipEnv}`);
+    }
+  }
+
   const extraDirs: string[] = [];
   const extraBase = '/workspace/extra';
   if (fs.existsSync(extraBase)) {
     for (const entry of fs.readdirSync(extraBase)) {
       const fullPath = path.join(extraBase, entry);
       if (fs.statSync(fullPath).isDirectory()) {
-        extraDirs.push(fullPath);
+        if (skipClaudeMdDirs.has(fullPath)) {
+          log(`Skipping CLAUDE.md for mount: ${fullPath} (loadClaudeMd: false)`);
+        } else {
+          extraDirs.push(fullPath);
+        }
       }
     }
   }

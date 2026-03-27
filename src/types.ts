@@ -2,6 +2,7 @@ export interface AdditionalMount {
   hostPath: string; // Absolute path on host (supports ~ for home)
   containerPath?: string; // Optional — defaults to basename of hostPath. Mounted at /workspace/extra/{value}
   readonly?: boolean; // Default: true for safety
+  loadClaudeMd?: boolean; // Default: true (undefined). Set to false to skip CLAUDE.md auto-loading for this mount.
 }
 
 /**

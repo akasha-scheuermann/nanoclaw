@@ -75,6 +75,10 @@ interface VolumeMount {
   hostPath: string;
   containerPath: string;
   readonly: boolean;
+  /** When false, the agent-runner will not pass this mount's container path to
+   *  additionalDirectories, preventing its CLAUDE.md from being auto-loaded.
+   *  Undefined/true = load as normal (preserves existing behavior). */
+  loadClaudeMd?: boolean;
 }
 
 function buildVolumeMounts(
@@ -289,12 +293,23 @@ function buildVolumeMounts(
 
   // Additional mounts validated against external allowlist (tamper-proof from containers)
   if (group.containerConfig?.additionalMounts) {
-    const validatedMounts = validateAdditionalMounts(
-      group.containerConfig.additionalMounts,
-      group.name,
-      isMain,
-    );
-    mounts.push(...validatedMounts);
+    const rawMounts = group.containerConfig.additionalMounts;
+    const validatedMounts = validateAdditionalMounts(rawMounts, group.name, isMain);
+
+    // Propagate loadClaudeMd flag from the original mount config.
+    // validateAdditionalMounts resolves containerPath to a short name (e.g. "vault");
+    // the full container path becomes /workspace/extra/{name}. Match by that suffix.
+    for (const validated of validatedMounts) {
+      // Find the original mount entry whose resolved container path matches
+      const originalMount = rawMounts.find((raw) => {
+        const resolvedName = raw.containerPath ?? path.basename(raw.hostPath);
+        return validated.containerPath === `/workspace/extra/${resolvedName}`;
+      });
+      mounts.push({
+        ...validated,
+        loadClaudeMd: originalMount?.loadClaudeMd,
+      });
+    }
   }
 
   // Deduplicate by containerPath — last entry wins (additionalMounts override auto-mounts)
@@ -321,6 +336,17 @@ async function buildContainerArgs(
   // Per-group model override
   if (model) {
     args.push('-e', `CLAUDE_CODE_MODEL=${model}`);
+  }
+
+  // Inform the agent-runner which /workspace/extra/* subdirectories should NOT
+  // have their CLAUDE.md auto-loaded. Encoded as a JSON array of full container
+  // paths (e.g. ["/workspace/extra/vault"]). Undefined loadClaudeMd defaults to
+  // true (load), so only explicit false entries are included here.
+  const skipClaudeMdDirs = mounts
+    .filter((m) => m.loadClaudeMd === false)
+    .map((m) => m.containerPath);
+  if (skipClaudeMdDirs.length > 0) {
+    args.push('-e', `NANOCLAW_SKIP_CLAUDE_MD_DIRS=${JSON.stringify(skipClaudeMdDirs)}`);
   }
 
   // OneCLI gateway handles credential injection — containers never see real secrets.
