@@ -158,6 +158,7 @@ async function runTask(
   let inputTokens: number | null = null;
   let outputTokens: number | null = null;
   let totalCostUsd: number | null = null;
+  let accModelUsage: Record<string, Record<string, number>> | null = null;
 
   // For group context mode, use the group's current session
   const sessions = deps.getSessions();
@@ -215,6 +216,19 @@ async function runTask(
         if (streamedOutput.total_cost_usd !== undefined) {
           totalCostUsd = (totalCostUsd ?? 0) + streamedOutput.total_cost_usd;
         }
+        if (streamedOutput.modelUsage) {
+          if (!accModelUsage) accModelUsage = {};
+          for (const [modelKey, usage] of Object.entries(streamedOutput.modelUsage)) {
+            const u = usage as Record<string, number>;
+            if (!accModelUsage[modelKey]) {
+              accModelUsage[modelKey] = { ...u };
+            } else {
+              for (const field of Object.keys(u)) {
+                accModelUsage[modelKey][field] = (accModelUsage[modelKey][field] ?? 0) + (u[field] ?? 0);
+              }
+            }
+          }
+        }
       },
     );
 
@@ -259,7 +273,7 @@ async function runTask(
       input_tokens: inputTokens,
       output_tokens: outputTokens,
       total_cost_usd: totalCostUsd,
-      model: group.model ?? undefined,
+      modelUsage: accModelUsage ?? undefined,
     });
   }
 

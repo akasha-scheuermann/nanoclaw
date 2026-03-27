@@ -53,6 +53,7 @@ interface ContainerOutput {
     cache_read_input_tokens?: number;
   };
   total_cost_usd?: number;
+  modelUsage?: Record<string, unknown>;
 }
 
 interface SessionEntry {
@@ -558,6 +559,7 @@ async function runQuery(
           cache_read_input_tokens?: number;
         };
         total_cost_usd?: number;
+        modelUsage?: Record<string, unknown>;
       };
       log(`Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}${msgAny.usage ? ` in=${msgAny.usage.input_tokens} out=${msgAny.usage.output_tokens}` : ''}`);
       writeOutput({
@@ -566,6 +568,7 @@ async function runQuery(
         newSessionId,
         ...(msgAny.usage ? { usage: msgAny.usage } : {}),
         ...(msgAny.total_cost_usd !== undefined ? { total_cost_usd: msgAny.total_cost_usd } : {}),
+        ...(msgAny.modelUsage !== undefined ? { modelUsage: msgAny.modelUsage } : {}),
       });
     }
   }

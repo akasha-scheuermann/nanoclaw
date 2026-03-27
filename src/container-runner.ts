@@ -68,6 +68,7 @@ export interface ContainerOutput {
     cache_read_input_tokens?: number;
   };
   total_cost_usd?: number;
+  modelUsage?: Record<string, unknown>;
 }
 
 interface VolumeMount {
