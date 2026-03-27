@@ -147,7 +147,8 @@ function createSchema(database: Database.Database): void {
       timestamp TEXT NOT NULL,
       input_tokens INTEGER,
       output_tokens INTEGER,
-      total_cost_usd REAL
+      total_cost_usd REAL,
+      model TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_token_logs_chat ON token_logs(chat_jid, timestamp);
     CREATE INDEX IF NOT EXISTS idx_token_logs_group ON token_logs(group_folder, timestamp);
@@ -235,6 +236,13 @@ function createSchema(database: Database.Database): void {
     database.exec(`ALTER TABLE task_run_logs ADD COLUMN total_cost_usd REAL`);
   } catch {
     /* columns already exist */
+  }
+
+  // Add model column to token_logs if it doesn't exist
+  try {
+    database.exec(`ALTER TABLE token_logs ADD COLUMN model TEXT`);
+  } catch {
+    /* column already exists */
   }
 }
 
@@ -744,11 +752,12 @@ export function logTokenUsage(log: {
   input_tokens: number | null;
   output_tokens: number | null;
   total_cost_usd: number | null;
+  model?: string;
 }): void {
   db.prepare(
     `
-    INSERT INTO token_logs (chat_jid, group_folder, timestamp, input_tokens, output_tokens, total_cost_usd)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO token_logs (chat_jid, group_folder, timestamp, input_tokens, output_tokens, total_cost_usd, model)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `,
   ).run(
     log.chat_jid,
@@ -757,6 +766,7 @@ export function logTokenUsage(log: {
     log.input_tokens,
     log.output_tokens,
     log.total_cost_usd,
+    log.model ?? null,
   );
 }
 

@@ -375,6 +375,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           input_tokens: result.usage?.input_tokens ?? null,
           output_tokens: result.usage?.output_tokens ?? null,
           total_cost_usd: result.total_cost_usd ?? null,
+          model: group.model ?? undefined,
         });
       }
 

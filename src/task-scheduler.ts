@@ -13,6 +13,7 @@ import {
   getDueTasks,
   getTaskById,
   logTaskRun,
+  logTokenUsage,
   updateTask,
   updateTaskAfterRun,
 } from './db.js';
@@ -249,6 +250,18 @@ async function runTask(
     output_tokens: outputTokens,
     total_cost_usd: totalCostUsd,
   });
+
+  if (inputTokens !== null || outputTokens !== null || totalCostUsd !== null) {
+    logTokenUsage({
+      chat_jid: task.chat_jid,
+      group_folder: task.group_folder,
+      timestamp: new Date().toISOString(),
+      input_tokens: inputTokens,
+      output_tokens: outputTokens,
+      total_cost_usd: totalCostUsd,
+      model: group.model ?? undefined,
+    });
+  }
 
   const nextRun = computeNextRun(task);
   const resultSummary = error
