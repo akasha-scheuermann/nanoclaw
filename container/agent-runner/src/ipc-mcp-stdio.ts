@@ -17,6 +17,7 @@ const TASKS_DIR = path.join(IPC_DIR, 'tasks');
 const AGENT_REQUESTS_DIR = path.join(IPC_DIR, 'agent_requests');
 const AGENT_RESPONSES_DIR = path.join(IPC_DIR, 'agent_responses');
 const WORK_ITEM_RESPONSES_DIR = path.join(IPC_DIR, 'work_item_responses');
+const REACTION_RESPONSES_DIR = path.join(IPC_DIR, 'reaction_responses');
 
 // Context from environment variables (set by the agent runner)
 const chatJid = process.env.NANOCLAW_CHAT_JID!;
@@ -725,6 +726,107 @@ server.tool(
 
     return {
       content: [{ type: 'text' as const, text: 'Timed out waiting for work item list.' }],
+      isError: true,
+    };
+  },
+);
+
+server.tool(
+  'get_reaction_summary',
+  `Get a summary of reactions on your recent messages. Use this at the start of an initiative loop session to assess quality and calibrate your approach.
+
+Returns two views:
+- summary: reaction counts grouped by emoji, with sample message snippets showing what resonated (or didn't)
+- recent: the most recent individual reactions in chronological order
+
+Interpret signals:
+- ❤️ / 👍 = positive, keep doing this
+- 👎 = something didn't land — read the message snippet and reflect
+- No reactions = neutral (common for background tasks that ran silently)
+
+Use findings to inform your work selection and approach this session.`,
+  {
+    days: z
+      .number()
+      .optional()
+      .describe('How many days to look back (default: 30)'),
+    limit: z
+      .number()
+      .optional()
+      .describe('Max recent reactions to return (default: 20)'),
+  },
+  async (args) => {
+    fs.mkdirSync(REACTION_RESPONSES_DIR, { recursive: true });
+
+    const requestId = `rxn-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const data = {
+      type: 'get_reaction_summary',
+      requestId,
+      reactionDays: args.days,
+      reactionLimit: args.limit,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    const respPath = path.join(REACTION_RESPONSES_DIR, `${requestId}.json`);
+    const deadline = Date.now() + 10_000;
+    const POLL_INTERVAL = 200;
+
+    while (Date.now() < deadline) {
+      if (fs.existsSync(respPath)) {
+        const result = JSON.parse(fs.readFileSync(respPath, 'utf-8'));
+        fs.unlinkSync(respPath);
+
+        if (!result.success) {
+          return {
+            content: [{ type: 'text' as const, text: `Failed: ${result.error}` }],
+            isError: true,
+          };
+        }
+
+        const lines: string[] = [];
+
+        if (result.summary.length === 0) {
+          lines.push('No reactions found in the specified window.');
+        } else {
+          lines.push('*Reaction summary:*');
+          for (const entry of result.summary as Array<{
+            emoji: string;
+            count: number;
+            last_seen: string;
+            sample_messages: string[];
+          }>) {
+            lines.push(`\n${entry.emoji}  ×${entry.count}  (last: ${entry.last_seen.slice(0, 10)})`);
+            for (const snippet of entry.sample_messages) {
+              lines.push(`  → "${snippet.trim()}"`);
+            }
+          }
+        }
+
+        if (result.recent && result.recent.length > 0) {
+          lines.push('\n*Recent reactions:*');
+          for (const r of result.recent as Array<{
+            emoji: string;
+            reactor_name: string | null;
+            timestamp: string;
+            message_snippet: string;
+          }>) {
+            const who = r.reactor_name || 'unknown';
+            lines.push(`${r.emoji} ${who} — "${r.message_snippet.trim()}" (${r.timestamp.slice(0, 10)})`);
+          }
+        }
+
+        return {
+          content: [{ type: 'text' as const, text: lines.join('\n') }],
+        };
+      }
+      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL));
+    }
+
+    return {
+      content: [{ type: 'text' as const, text: 'Timed out waiting for reaction summary.' }],
       isError: true,
     };
   },

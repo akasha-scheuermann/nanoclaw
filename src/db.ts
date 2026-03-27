@@ -856,6 +856,84 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
   return result;
 }
 
+// --- Reaction summary for agent self-review ---
+
+export interface ReactionSummaryEntry {
+  emoji: string;
+  count: number;
+  last_seen: string;
+  sample_messages: string[]; // up to 3 message content snippets (first 120 chars)
+}
+
+export interface ReactionOnMessage {
+  emoji: string;
+  reactor_name: string | null;
+  timestamp: string;
+  message_snippet: string;
+}
+
+export function getReactionSummaryForGroup(
+  chatJid: string,
+  days: number = 30,
+  limit: number = 20,
+): { summary: ReactionSummaryEntry[]; recent: ReactionOnMessage[] } {
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
+  // Aggregate by emoji
+  const summaryRows = db
+    .prepare(
+      `SELECT r.emoji,
+              COUNT(*) as count,
+              MAX(r.timestamp) as last_seen
+       FROM reactions r
+       JOIN messages m ON r.message_id = m.id AND r.message_chat_jid = m.chat_jid
+       WHERE m.chat_jid = ? AND m.is_bot_message = 1 AND r.timestamp > ?
+       GROUP BY r.emoji
+       ORDER BY count DESC`,
+    )
+    .all(chatJid, since) as Array<{
+    emoji: string;
+    count: number;
+    last_seen: string;
+  }>;
+
+  // Sample messages per emoji (up to 3 per emoji)
+  const summary: ReactionSummaryEntry[] = summaryRows.map((row) => {
+    const samples = db
+      .prepare(
+        `SELECT SUBSTR(m.content, 1, 120) as snippet
+         FROM reactions r
+         JOIN messages m ON r.message_id = m.id AND r.message_chat_jid = m.chat_jid
+         WHERE m.chat_jid = ? AND m.is_bot_message = 1
+           AND r.emoji = ? AND r.timestamp > ?
+         ORDER BY r.timestamp DESC
+         LIMIT 3`,
+      )
+      .all(chatJid, row.emoji, since) as Array<{ snippet: string }>;
+    return {
+      emoji: row.emoji,
+      count: row.count,
+      last_seen: row.last_seen,
+      sample_messages: samples.map((s) => s.snippet),
+    };
+  });
+
+  // Most recent individual reactions (for the detailed view)
+  const recent = db
+    .prepare(
+      `SELECT r.emoji, r.reactor_name, r.timestamp,
+              SUBSTR(m.content, 1, 120) as message_snippet
+       FROM reactions r
+       JOIN messages m ON r.message_id = m.id AND r.message_chat_jid = m.chat_jid
+       WHERE m.chat_jid = ? AND m.is_bot_message = 1 AND r.timestamp > ?
+       ORDER BY r.timestamp DESC
+       LIMIT ?`,
+    )
+    .all(chatJid, since, limit) as ReactionOnMessage[];
+
+  return { summary, recent };
+}
+
 // --- Work item accessors ---
 
 export function createWorkItem(

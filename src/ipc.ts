@@ -10,6 +10,7 @@ import {
   createTask,
   createWorkItem,
   deleteTask,
+  getReactionSummaryForGroup,
   getTaskById,
   listWorkItems,
   updateTask,
@@ -341,6 +342,9 @@ export async function processTaskIpc(
     workItemOutcome?: string;
     workItemBlockedReason?: string;
     workItemStatusFilter?: string[];
+    // For reaction summary
+    reactionDays?: number;
+    reactionLimit?: number;
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
@@ -876,6 +880,47 @@ export async function processTaskIpc(
       fs.writeFileSync(
         path.join(wiListResponseDir, `${data.requestId}.json`),
         JSON.stringify({ success: true, items }),
+      );
+      break;
+    }
+
+    case 'get_reaction_summary': {
+      if (!data.requestId) break;
+
+      // Resolve chatJid from sourceGroup folder
+      const sourceEntry = Object.entries(registeredGroups).find(
+        ([_, g]) => g.folder === sourceGroup,
+      );
+      const chatJid = sourceEntry?.[0];
+
+      const reactionResponseDir = path.join(
+        DATA_DIR,
+        'ipc',
+        sourceGroup,
+        'reaction_responses',
+      );
+      fs.mkdirSync(reactionResponseDir, { recursive: true });
+
+      if (!chatJid) {
+        fs.writeFileSync(
+          path.join(reactionResponseDir, `${data.requestId}.json`),
+          JSON.stringify({ success: false, error: 'Group JID not found' }),
+        );
+        break;
+      }
+
+      const result = getReactionSummaryForGroup(
+        chatJid,
+        data.reactionDays ?? 30,
+        data.reactionLimit ?? 20,
+      );
+      fs.writeFileSync(
+        path.join(reactionResponseDir, `${data.requestId}.json`),
+        JSON.stringify({ success: true, ...result }),
+      );
+      logger.info(
+        { sourceGroup, summaryCount: result.summary.length },
+        'Reaction summary served via IPC',
       );
       break;
     }
