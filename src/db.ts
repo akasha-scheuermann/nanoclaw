@@ -1017,7 +1017,9 @@ export function getReactionSummaryForGroup(
        ORDER BY r.timestamp DESC
        LIMIT ?`,
     )
-    .all(chatJid, since, limit) as Array<Omit<ReactionOnMessage, 'thread_replies'>>;
+    .all(chatJid, since, limit) as Array<
+    Omit<ReactionOnMessage, 'thread_replies'>
+  >;
 
   // Fetch thread replies for each reacted message (non-bot replies where thread_message_id = reacted message id)
   const threadRepliesStmt = db.prepare(
@@ -1029,7 +1031,10 @@ export function getReactionSummaryForGroup(
 
   const recent: ReactionOnMessage[] = recentRows.map((row) => ({
     ...row,
-    thread_replies: threadRepliesStmt.all(chatJid, row.message_id) as ThreadReply[],
+    thread_replies: threadRepliesStmt.all(
+      chatJid,
+      row.message_id,
+    ) as ThreadReply[],
   }));
 
   return { summary, recent };
