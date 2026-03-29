@@ -825,18 +825,18 @@ server.tool(
 
 server.tool(
   'get_reaction_summary',
-  `Get a summary of reactions on your recent messages. Use this at the start of an initiative loop session to assess quality and calibrate your approach.
+  `Get a summary of reactions on your recent messages.
 
 Returns two views:
-- summary: reaction counts grouped by emoji, with sample message snippets showing what resonated (or didn't)
-- recent: the most recent individual reactions in chronological order
+- summary: reaction counts grouped by emoji, with sample message snippets for each emoji
+- recent: the most recent individual reactions in chronological order, each with any thread replies the user added in the same thread
 
-Interpret signals:
-- ❤️ / 👍 = positive, keep doing this
-- 👎 = something didn't land — read the message snippet and reflect
-- No reactions = neutral (common for background tasks that ran silently)
-
-Use findings to inform your work selection and approach this session.`,
+Each item in recent includes:
+- emoji: the reaction emoji
+- reactor_name: who reacted
+- timestamp: when they reacted
+- message_snippet: first 120 chars of the reacted-to message
+- thread_replies: array of { sender_name, content, timestamp } for any replies in that thread`,
   {
     days: z
       .number()
@@ -904,9 +904,16 @@ Use findings to inform your work selection and approach this session.`,
             reactor_name: string | null;
             timestamp: string;
             message_snippet: string;
+            thread_replies: Array<{ sender_name: string | null; content: string; timestamp: string }>;
           }>) {
             const who = r.reactor_name || 'unknown';
             lines.push(`${r.emoji} ${who} — "${r.message_snippet.trim()}" (${r.timestamp.slice(0, 10)})`);
+            if (r.thread_replies && r.thread_replies.length > 0) {
+              for (const reply of r.thread_replies) {
+                const replyWho = reply.sender_name || 'unknown';
+                lines.push(`  💬 ${replyWho}: "${reply.content.trim()}"`);
+              }
+            }
           }
         }
 

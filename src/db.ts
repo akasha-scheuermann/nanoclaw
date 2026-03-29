@@ -944,11 +944,19 @@ export interface ReactionSummaryEntry {
   sample_messages: string[]; // up to 3 message content snippets (first 120 chars)
 }
 
+export interface ThreadReply {
+  sender_name: string | null;
+  content: string;
+  timestamp: string;
+}
+
 export interface ReactionOnMessage {
   emoji: string;
   reactor_name: string | null;
   timestamp: string;
   message_snippet: string;
+  message_id: string;
+  thread_replies: ThreadReply[]; // replies in the same thread, providing context on the reaction
 }
 
 export function getReactionSummaryForGroup(
@@ -997,18 +1005,32 @@ export function getReactionSummaryForGroup(
     };
   });
 
-  // Most recent individual reactions (for the detailed view)
-  const recent = db
+  // Most recent individual reactions (for the detailed view), including message_id for thread lookup
+  const recentRows = db
     .prepare(
       `SELECT r.emoji, r.reactor_name, r.timestamp,
-              SUBSTR(m.content, 1, 120) as message_snippet
+              SUBSTR(m.content, 1, 120) as message_snippet,
+              m.id as message_id
        FROM reactions r
        JOIN messages m ON r.message_id = m.id AND r.message_chat_jid = m.chat_jid
        WHERE m.chat_jid = ? AND m.is_bot_message = 1 AND r.timestamp > ?
        ORDER BY r.timestamp DESC
        LIMIT ?`,
     )
-    .all(chatJid, since, limit) as ReactionOnMessage[];
+    .all(chatJid, since, limit) as Array<Omit<ReactionOnMessage, 'thread_replies'>>;
+
+  // Fetch thread replies for each reacted message (non-bot replies where thread_message_id = reacted message id)
+  const threadRepliesStmt = db.prepare(
+    `SELECT sender_name, SUBSTR(content, 1, 240) as content, timestamp
+     FROM messages
+     WHERE chat_jid = ? AND thread_message_id = ? AND is_bot_message = 0
+     ORDER BY timestamp ASC`,
+  );
+
+  const recent: ReactionOnMessage[] = recentRows.map((row) => ({
+    ...row,
+    thread_replies: threadRepliesStmt.all(chatJid, row.message_id) as ThreadReply[],
+  }));
 
   return { summary, recent };
 }
