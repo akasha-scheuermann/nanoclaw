@@ -16,6 +16,7 @@ import {
   updateTask,
   updateWorkItem,
 } from './db.js';
+import { readEnvFile } from './env.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import { McpBridge } from './mcp-bridge.js';
@@ -1006,6 +1007,12 @@ async function processMcpRequest(
 }
 
 const MAX_CONCURRENT_AGENT_CALLS = 2;
+
+// Read cross-agent internal group from .env file (not process.env — launchd plist doesn't inject it).
+const _envCrossAgent = readEnvFile(['CROSS_AGENT_INTERNAL_GROUP']);
+const CROSS_AGENT_INTERNAL_GROUP =
+  process.env.CROSS_AGENT_INTERNAL_GROUP ||
+  _envCrossAgent.CROSS_AGENT_INTERNAL_GROUP;
 let activeAgentCalls = 0;
 
 // Restricted groups that cannot be called via cross-agent IPC.
@@ -1097,18 +1104,27 @@ async function processAgentCallRequest(
     'Processing cross-agent call',
   );
 
-  // Chat visibility: forward call preview to source group's chat
+  // Chat visibility: forward call preview to internal comms group (or source group as fallback)
   const crossAgentVisibility = process.env.CROSS_AGENT_VISIBILITY !== 'false'; // enabled by default
   const sourceEntry = Object.entries(registeredGroups).find(
     ([_, g]) => g.folder === sourceGroup,
   );
   const sourceJid = sourceEntry?.[0];
 
-  if (crossAgentVisibility && sourceJid) {
+  // CROSS_AGENT_INTERNAL_GROUP: if set, all cross-agent visibility messages go to that group's JID
+  // instead of the source group's JID. Falls back to source group if unset or not registered.
+  const internalEntry = CROSS_AGENT_INTERNAL_GROUP
+    ? Object.entries(registeredGroups).find(
+        ([_, g]) => g.folder === CROSS_AGENT_INTERNAL_GROUP,
+      )
+    : undefined;
+  const visibilityJid = internalEntry?.[0] ?? sourceJid;
+
+  if (crossAgentVisibility && visibilityJid) {
     const preview =
       data.prompt.length > 500 ? data.prompt.slice(0, 500) + '…' : data.prompt;
     sendMessage(
-      sourceJid,
+      visibilityJid,
       `[${sourceGroup}] → @${data.targetGroup}\n\n${preview}`,
     ).catch((err) =>
       logger.error({ err, sourceGroup }, 'Failed to forward agent call'),
@@ -1156,14 +1172,14 @@ async function processAgentCallRequest(
             'Cross-agent call: response written (streaming)',
           );
 
-          // Forward the response to the source group's chat for visibility
-          if (crossAgentVisibility && sourceJid) {
+          // Forward the response to the visibility group's chat
+          if (crossAgentVisibility && visibilityJid) {
             const responsePreview =
               streamedOutput.result.length > 500
                 ? streamedOutput.result.slice(0, 500) + '…'
                 : streamedOutput.result;
             sendMessage(
-              sourceJid,
+              visibilityJid,
               `@${data.targetGroup} → [${sourceGroup}]\n\n${responsePreview}`,
             ).catch((err) =>
               logger.error(
@@ -1210,12 +1226,12 @@ async function processAgentCallRequest(
         'Cross-agent call completed (fallback)',
       );
 
-      // Forward the response to the source group's chat for visibility
-      if (crossAgentVisibility && sourceJid) {
+      // Forward the response to the visibility group's chat
+      if (crossAgentVisibility && visibilityJid) {
         const responsePreview =
           resultText.length > 500 ? resultText.slice(0, 500) + '…' : resultText;
         sendMessage(
-          sourceJid,
+          visibilityJid,
           `@${data.targetGroup} → [${sourceGroup}]\n\n${responsePreview}`,
         ).catch((err) =>
           logger.error(

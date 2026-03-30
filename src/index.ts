@@ -35,6 +35,7 @@ import {
   getAllRegisteredGroups,
   getAllSessions,
   getAllTasks,
+  getIgnoredGroupJids,
   getMessageFromMe,
   getMessagesSince,
   getNewMessages,
@@ -197,9 +198,13 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
 export function getAvailableGroups(): import('./container-runner.js').AvailableGroup[] {
   const chats = getAllChats();
   const registeredJids = new Set(Object.keys(registeredGroups));
+  const ignoredJids = getIgnoredGroupJids();
 
   return chats
-    .filter((c) => c.jid !== '__group_sync__' && c.is_group)
+    .filter(
+      (c) =>
+        c.jid !== '__group_sync__' && c.is_group && !ignoredJids.has(c.jid),
+    )
     .map((c) => ({
       jid: c.jid,
       name: c.name,

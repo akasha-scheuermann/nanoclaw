@@ -152,6 +152,12 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_token_logs_chat ON token_logs(chat_jid, timestamp);
     CREATE INDEX IF NOT EXISTS idx_token_logs_group ON token_logs(group_folder, timestamp);
+
+    CREATE TABLE IF NOT EXISTS ignored_groups (
+      jid TEXT PRIMARY KEY,
+      reason TEXT,
+      ignored_at DATETIME DEFAULT (datetime('now'))
+    );
   `);
 
   // Add context_mode column if it doesn't exist (migration for existing DBs)
@@ -251,6 +257,32 @@ function createSchema(database: Database.Database): void {
   } catch {
     /* column already exists */
   }
+
+  // Pre-populate ignored_groups with known archived/deleted groups
+  const archivedGroups = [
+    {
+      jid: '120363426214845360@g.us',
+      reason: 'archived — #vault (consolidated into #system)',
+    },
+    {
+      jid: '120363424773829181@g.us',
+      reason: 'archived — #engine (consolidated into #system)',
+    },
+    {
+      jid: '120363407937678572@g.us',
+      reason: 'archived — #foundation (consolidated into #system)',
+    },
+    {
+      jid: '120363407229437449@g.us',
+      reason: 'archived — #daily-briefing (decommissioned)',
+    },
+  ];
+  const insertIgnored = database.prepare(
+    `INSERT OR IGNORE INTO ignored_groups (jid, reason) VALUES (?, ?)`,
+  );
+  for (const { jid, reason } of archivedGroups) {
+    insertIgnored.run(jid, reason);
+  }
 }
 
 export function initDatabase(): void {
@@ -342,6 +374,17 @@ export interface ChatInfo {
   last_message_time: string;
   channel: string;
   is_group: number;
+}
+
+/**
+ * Get the set of JIDs that should be excluded from available_groups.json.
+ * These are archived or deleted groups that clutter the list.
+ */
+export function getIgnoredGroupJids(): Set<string> {
+  const rows = db.prepare(`SELECT jid FROM ignored_groups`).all() as {
+    jid: string;
+  }[];
+  return new Set(rows.map((r) => r.jid));
 }
 
 /**
