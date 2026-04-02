@@ -24,6 +24,78 @@ const chatJid = process.env.NANOCLAW_CHAT_JID!;
 const groupFolder = process.env.NANOCLAW_GROUP_FOLDER!;
 const isMain = process.env.NANOCLAW_IS_MAIN === '1';
 
+// ── MCP Tool Allowlist ──────────────────────────────────────────────────
+// Reads UNIVERSAL_MCP_ALLOWLIST (comma-separated) and ALLOWED_MCP_TOOLS
+// (JSON array) from env. Only tools matching these patterns are registered.
+// Empty allowlist = no tools registered (secure by default).
+
+function buildToolAllowlist(): string[] {
+  const patterns: string[] = [];
+
+  const universal = process.env.UNIVERSAL_MCP_ALLOWLIST;
+  if (universal) {
+    for (const tool of universal.split(',').map(t => t.trim()).filter(Boolean)) {
+      patterns.push(tool);
+    }
+  }
+
+  const perGroup = process.env.ALLOWED_MCP_TOOLS;
+  if (perGroup) {
+    try {
+      const parsed = JSON.parse(perGroup);
+      if (Array.isArray(parsed)) {
+        for (const tool of parsed) {
+          if (typeof tool === 'string' && tool.trim()) {
+            patterns.push(tool.trim());
+          }
+        }
+      }
+    } catch {
+      // Ignore parse errors
+    }
+  }
+
+  return patterns;
+}
+
+/**
+ * Check if a tool name matches the allowlist patterns.
+ * Patterns support trailing wildcards (e.g., "calendar_*" matches "calendar_list_events").
+ * If no allowlist is configured (both env vars unset), all tools are allowed (backwards compat).
+ */
+function isToolAllowed(toolName: string): boolean {
+  // If neither env var is set at all, allow everything (backwards compat)
+  if (
+    process.env.UNIVERSAL_MCP_ALLOWLIST === undefined &&
+    process.env.ALLOWED_MCP_TOOLS === undefined
+  ) {
+    return true;
+  }
+
+  const allowlist = buildToolAllowlist();
+  if (allowlist.length === 0) return false;
+
+  // Strip mcp__server__ prefix if present (bridged tools come as raw names,
+  // but patterns might be fully qualified)
+  const rawName = toolName.replace(/^mcp__[^_]+__/, '');
+
+  for (const pattern of allowlist) {
+    // Also strip mcp__ prefix from pattern for comparison
+    const rawPattern = pattern.replace(/^mcp__[^_]+__/, '');
+
+    if (rawPattern === rawName) return true;
+
+    // Glob wildcard: "calendar_*" matches "calendar_list_events"
+    if (rawPattern.endsWith('*')) {
+      const prefix = rawPattern.slice(0, -1);
+      if (rawName.startsWith(prefix)) return true;
+    }
+  }
+
+  return false;
+}
+
+
 function writeIpcFile(dir: string, data: object): string {
   fs.mkdirSync(dir, { recursive: true });
 
@@ -958,9 +1030,12 @@ if (isMain) {
 
   server.tool(
     'snapshot_groups',
-    'Commit and push any changes in the groups/ userland repo to GitHub. Use after making meaningful changes to your workspace — prompt updates, new skills, rule files. Skips cleanly if nothing has changed.',
-    { message: z.string().optional().describe('Commit message describing what changed') },
-    async ({ message }) => {
+    'Commit and push any changes in a repo to GitHub. Defaults to the groups/ userland repo. Pass repoPath to snapshot a different allowlisted repo (e.g. ~/Code/System/akasha-scripts). Skips cleanly if nothing has changed.',
+    {
+      message: z.string().optional().describe('Commit message describing what changed'),
+      repoPath: z.string().optional().describe('Absolute path to a repo to snapshot instead of groups/ (must be allowlisted on host)'),
+    },
+    async ({ message, repoPath }) => {
       const SNAPSHOT_RESPONSES_DIR = path.join(IPC_DIR, 'snapshot_responses');
       fs.mkdirSync(SNAPSHOT_RESPONSES_DIR, { recursive: true });
 
@@ -970,6 +1045,7 @@ if (isMain) {
         groupFolder,
         requestId,
         message: message || 'chore: snapshot agent workspaces',
+        ...(repoPath ? { repoPath } : {}),
         timestamp: new Date().toISOString(),
       };
 
@@ -1208,6 +1284,9 @@ async function registerBridgedTools(): Promise<void> {
 
           zodSchema[key] = zodType;
         }
+
+        // Filter bridged tools against the allowlist
+        if (!isToolAllowed(tool.name)) continue;
 
         server.tool(
           tool.name,

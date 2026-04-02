@@ -102,6 +102,42 @@ function getBlockedMcpTools(): string[] {
 }
 
 /**
+ * Build the MCP tool allowlist from environment variables.
+ * - UNIVERSAL_MCP_ALLOWLIST: comma-separated baseline tools (from host env)
+ * - ALLOWED_MCP_TOOLS: JSON array of per-group additional tools (from container_config)
+ *
+ * Returns the merged list of glob patterns. Empty array = no MCP tools allowed (secure by default).
+ */
+function getMcpToolAllowlist(): string[] {
+  const patterns: string[] = [];
+
+  const universal = process.env.UNIVERSAL_MCP_ALLOWLIST;
+  if (universal) {
+    for (const tool of universal.split(',').map(t => t.trim()).filter(Boolean)) {
+      patterns.push(tool);
+    }
+  }
+
+  const perGroup = process.env.ALLOWED_MCP_TOOLS;
+  if (perGroup) {
+    try {
+      const parsed = JSON.parse(perGroup);
+      if (Array.isArray(parsed)) {
+        for (const tool of parsed) {
+          if (typeof tool === 'string' && tool.trim()) {
+            patterns.push(tool.trim());
+          }
+        }
+      }
+    } catch {
+      log(`Warning: failed to parse ALLOWED_MCP_TOOLS: ${perGroup}`);
+    }
+  }
+
+  return patterns;
+}
+
+/**
  * Push-based async iterable for streaming user messages to the SDK.
  * Keeps the iterable alive until end() is called, preventing isSingleUserTurn.
  */
@@ -491,19 +527,52 @@ async function runQuery(
       systemPrompt: globalClaudeMd
         ? { type: 'preset' as const, preset: 'claude_code' as const, append: globalClaudeMd }
         : undefined,
-      allowedTools: [
-        'Bash',
-        'Read', 'Write', 'Edit', 'Glob', 'Grep',
-        'WebSearch', 'WebFetch',
-        'Task', 'TaskOutput', 'TaskStop',
-        'TeamCreate', 'TeamDelete', 'SendMessage',
-        'TodoWrite', 'ToolSearch', 'Skill',
-        'NotebookEdit',
-        'mcp__nanoclaw__*',
-        ...(process.env.PLEX_TOKEN && process.env.PLEX_URL ? ['mcp__plex__*'] : []),
-        ...(process.env.FASTMAIL_API_TOKEN ? ['mcp__fastmail__*'] : []),
-        'mcp__ollama__*',
-      ],
+      allowedTools: (() => {
+        // Built-in SDK tools — always allowed (not MCP)
+        const builtinTools = [
+          'Bash',
+          'Read', 'Write', 'Edit', 'Glob', 'Grep',
+          'WebSearch', 'WebFetch',
+          'Task', 'TaskOutput', 'TaskStop',
+          'TeamCreate', 'TeamDelete', 'SendMessage',
+          'TodoWrite', 'ToolSearch', 'Skill',
+          'NotebookEdit',
+        ];
+
+        // MCP tool allowlist (merged universal + per-group)
+        const mcpAllowlist = getMcpToolAllowlist();
+
+        if (mcpAllowlist.length === 0) {
+          // Secure by default: no MCP tools if no allowlist configured
+          log('MCP allowlist is empty — no MCP tools will be available');
+          return builtinTools;
+        }
+
+        // Expand allowlist patterns into SDK-compatible allowedTools entries.
+        // Patterns already in mcp__server__* form pass through directly.
+        // Convenience shorthand patterns (no mcp__ prefix) get expanded to
+        // mcp__nanoclaw__{name} (the IPC MCP server where most tools live).
+        const mcpToolEntries: string[] = [];
+        for (const pattern of mcpAllowlist) {
+          if (pattern.startsWith('mcp__')) {
+            // Fully qualified — pass through as-is (supports globs like mcp__fastmail__*)
+            mcpToolEntries.push(pattern);
+          } else {
+            // Convenience shorthand — expand to nanoclaw IPC server prefix
+            // e.g., "send_message" -> "mcp__nanoclaw__send_message"
+            // e.g., "calendar_*" -> "mcp__nanoclaw__calendar_*"
+            mcpToolEntries.push(`mcp__nanoclaw__${pattern}`);
+          }
+        }
+
+        // Deduplicate
+        const uniqueEntries = [...new Set(mcpToolEntries)];
+
+        log(`MCP allowlist: ${JSON.stringify(mcpAllowlist)}`);
+        log(`MCP allowedTools entries: ${JSON.stringify(uniqueEntries)}`);
+
+        return [...builtinTools, ...uniqueEntries];
+      })(),
       disallowedTools: getBlockedMcpTools(),
       env: sdkEnv,
       permissionMode: 'bypassPermissions',

@@ -1,5 +1,6 @@
 import { execSync } from 'child_process';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
 import { CronExpressionParser } from 'cron-parser';
@@ -333,6 +334,7 @@ export async function processTaskIpc(
     requestId?: string;
     // For snapshot_groups
     message?: string;
+    repoPath?: string;
     // For work items
     workItemId?: number;
     workItemTitle?: string;
@@ -725,7 +727,43 @@ export async function processTaskIpc(
         break;
       }
       const commitMessage = data.message || 'chore: snapshot agent workspaces';
-      const groupsDir = path.join(process.cwd(), 'groups');
+      // Allow snapshotting other repos via repoPath (must be an allowlisted absolute path)
+      const ALLOWED_SNAPSHOT_REPOS = [
+        path.join(os.homedir(), 'Code', 'System', 'akasha-scripts'),
+        path.join(os.homedir(), 'Engine', 'nanoclaw-skills'),
+      ];
+      let groupsDir: string;
+      if (data.repoPath) {
+        const resolved = path.resolve(
+          data.repoPath.replace(/^~/, os.homedir()),
+        );
+        if (!ALLOWED_SNAPSHOT_REPOS.includes(resolved)) {
+          logger.warn(
+            { repoPath: data.repoPath },
+            'snapshot_groups: repo path not in allowlist',
+          );
+          if (data.requestId) {
+            const respDir = path.join(
+              DATA_DIR,
+              'ipc',
+              sourceGroup,
+              'snapshot_responses',
+            );
+            fs.mkdirSync(respDir, { recursive: true });
+            fs.writeFileSync(
+              path.join(respDir, `${data.requestId}.json`),
+              JSON.stringify({
+                success: false,
+                error: `Repo path not allowed: ${data.repoPath}`,
+              }),
+            );
+          }
+          break;
+        }
+        groupsDir = resolved;
+      } else {
+        groupsDir = path.join(process.cwd(), 'groups');
+      }
       const SNAPSHOT_RESPONSES_DIR = path.join(
         DATA_DIR,
         'ipc',
@@ -747,13 +785,48 @@ export async function processTaskIpc(
           // non-zero exit = staged changes exist
         }
         if (nothingToCommit) {
-          logger.info('snapshot_groups: nothing to commit');
-          if (data.requestId) {
-            fs.mkdirSync(SNAPSHOT_RESPONSES_DIR, { recursive: true });
-            fs.writeFileSync(
-              path.join(SNAPSHOT_RESPONSES_DIR, `${data.requestId}.json`),
-              JSON.stringify({ success: true, output: 'Nothing to commit.' }),
+          // Still check if there are unpushed commits
+          let needsPush = false;
+          try {
+            const ahead = execSync('git rev-list --count @{u}..HEAD', {
+              cwd: groupsDir,
+              stdio: 'pipe',
+            })
+              .toString()
+              .trim();
+            needsPush = parseInt(ahead, 10) > 0;
+          } catch {
+            // No upstream tracking or other error — skip push
+          }
+          if (needsPush) {
+            logger.info(
+              'snapshot_groups: nothing to commit but unpushed commits exist, pushing',
             );
+            execSync('git push', {
+              cwd: groupsDir,
+              timeout: 30_000,
+              stdio: 'pipe',
+            });
+            logger.info('snapshot_groups: pushed unpushed commits');
+            if (data.requestId) {
+              fs.mkdirSync(SNAPSHOT_RESPONSES_DIR, { recursive: true });
+              fs.writeFileSync(
+                path.join(SNAPSHOT_RESPONSES_DIR, `${data.requestId}.json`),
+                JSON.stringify({
+                  success: true,
+                  output: 'Nothing to commit. Pushed unpushed commits.',
+                }),
+              );
+            }
+          } else {
+            logger.info('snapshot_groups: nothing to commit');
+            if (data.requestId) {
+              fs.mkdirSync(SNAPSHOT_RESPONSES_DIR, { recursive: true });
+              fs.writeFileSync(
+                path.join(SNAPSHOT_RESPONSES_DIR, `${data.requestId}.json`),
+                JSON.stringify({ success: true, output: 'Nothing to commit.' }),
+              );
+            }
           }
           break;
         }

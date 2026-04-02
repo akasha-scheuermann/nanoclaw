@@ -42,6 +42,9 @@ const mcpEnvKeys = [
 ] as const;
 const mcpEnvConfig = readEnvFile([...mcpEnvKeys]);
 
+// MCP tool allowlist — read from .env (not process.env, which is intentionally clean)
+const { UNIVERSAL_MCP_ALLOWLIST } = readEnvFile(['UNIVERSAL_MCP_ALLOWLIST']);
+
 // Sentinel markers for robust output parsing (must match agent-runner)
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
@@ -333,6 +336,7 @@ async function buildContainerArgs(
   model?: string,
   agentIdentifier?: string,
   groupFolder?: string,
+  allowedMcpTools?: string[],
 ): Promise<string[]> {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
@@ -361,6 +365,16 @@ async function buildContainerArgs(
   // Forward Ollama admin tools flag if enabled
   if (OLLAMA_ADMIN_TOOLS) {
     args.push('-e', 'OLLAMA_ADMIN_TOOLS=true');
+  }
+
+  // Forward MCP tool allowlists for per-group scoping
+  // Universal allowlist: baseline tools every agent gets (from .env)
+  if (UNIVERSAL_MCP_ALLOWLIST) {
+    args.push('-e', `UNIVERSAL_MCP_ALLOWLIST=${UNIVERSAL_MCP_ALLOWLIST}`);
+  }
+  // Per-group allowlist: additional tools for this specific group (from container_config)
+  if (allowedMcpTools?.length) {
+    args.push('-e', `ALLOWED_MCP_TOOLS=${JSON.stringify(allowedMcpTools)}`);
   }
 
   // OneCLI gateway handles credential injection — containers never see real secrets.
@@ -466,6 +480,7 @@ export async function runContainerAgent(
     group.model,
     agentIdentifier,
     group.folder,
+    group.containerConfig?.allowedMcpTools,
   );
 
   logger.debug(
