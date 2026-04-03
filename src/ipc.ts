@@ -1145,15 +1145,25 @@ async function processAgentCallRequest(
 
   const [targetJid, targetGroup] = targetEntry;
 
-  // Security: block calls to restricted groups
+  // Security: block calls to restricted groups (unless source is also a main group)
   const restricted = getRestrictedGroups(registeredGroups);
   if (restricted.has(data.targetGroup)) {
-    logger.warn(
-      { sourceGroup, targetGroup: data.targetGroup },
-      'Cross-agent call to restricted group blocked',
+    const sourceEntry = Object.entries(registeredGroups).find(
+      ([_, g]) => g.folder === sourceGroup,
     );
-    writeResponse(null, `Calls to '${data.targetGroup}' are not permitted`);
-    return;
+    const sourceIsMain = sourceEntry?.[1]?.isMain ?? false;
+    if (!sourceIsMain) {
+      logger.warn(
+        { sourceGroup, targetGroup: data.targetGroup },
+        'Cross-agent call to restricted group blocked',
+      );
+      writeResponse(null, `Calls to '${data.targetGroup}' are not permitted`);
+      return;
+    }
+    logger.info(
+      { sourceGroup, targetGroup: data.targetGroup },
+      'Main-to-main cross-agent call permitted',
+    );
   }
 
   // Concurrency guard

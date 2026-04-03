@@ -411,6 +411,18 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
       if (result.status === 'error') {
         hadError = true;
+        // Clear invalid session so next attempt starts fresh
+        if (
+          result.error?.includes('No conversation found with session ID') &&
+          sessions[group.folder]
+        ) {
+          logger.info(
+            { group: group.name, folder: group.folder },
+            'Clearing invalid session after "not found" error',
+          );
+          delete sessions[group.folder];
+          setSession(group.folder, '');
+        }
       }
     },
   );
@@ -532,6 +544,22 @@ async function runAgent(
         { group: group.name, error: output.error },
         'Container agent error',
       );
+
+      // If the session ID is no longer valid (e.g. directory was renamed,
+      // session files were cleaned up), clear it so the next attempt starts fresh
+      // instead of looping on the same dead session.
+      if (
+        output.error?.includes('No conversation found with session ID') &&
+        sessions[group.folder]
+      ) {
+        logger.info(
+          { group: group.name, folder: group.folder },
+          'Clearing invalid session after "not found" error',
+        );
+        delete sessions[group.folder];
+        setSession(group.folder, '');
+      }
+
       return 'error';
     }
 
