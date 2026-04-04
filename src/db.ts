@@ -260,9 +260,7 @@ function createSchema(database: Database.Database): void {
 
   // Add created_at column to sessions if it doesn't exist
   try {
-    database.exec(
-      `ALTER TABLE sessions ADD COLUMN created_at TEXT DEFAULT (datetime('now'))`,
-    );
+    database.exec(`ALTER TABLE sessions ADD COLUMN created_at TEXT`);
   } catch {
     /* column already exists */
   }
