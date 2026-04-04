@@ -294,8 +294,7 @@ export class WhatsAppChannel implements Channel {
 
     this.sock.ev.on('creds.update', saveCreds);
 
-    // @ts-expect-error — chats.phoneNumberShare not yet in Baileys type defs
-    this.sock.ev.on(
+    (this.sock.ev as any).on(
       'chats.phoneNumberShare',
       ({ lid, jid }: { lid?: string; jid?: string }) => {
         const lidUser = lid?.split('@')[0].split(':')[0];
