@@ -258,6 +258,15 @@ function createSchema(database: Database.Database): void {
     /* column already exists */
   }
 
+  // Add created_at column to sessions if it doesn't exist
+  try {
+    database.exec(
+      `ALTER TABLE sessions ADD COLUMN created_at TEXT DEFAULT (datetime('now'))`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
   // Add reply context columns if they don't exist (migration for existing DBs)
   try {
     database.exec(`ALTER TABLE messages ADD COLUMN reply_to_message_id TEXT`);
@@ -900,7 +909,9 @@ export function getSession(groupFolder: string): string | undefined {
 
 export function setSession(groupFolder: string, sessionId: string): void {
   db.prepare(
-    'INSERT OR REPLACE INTO sessions (group_folder, session_id) VALUES (?, ?)',
+    `INSERT INTO sessions (group_folder, session_id, created_at)
+     VALUES (?, ?, datetime('now'))
+     ON CONFLICT(group_folder) DO UPDATE SET session_id = excluded.session_id`,
   ).run(groupFolder, sessionId);
 }
 
