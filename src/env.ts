@@ -65,8 +65,9 @@ export function readEnvFile(
     if (!wanted.has(key)) continue;
     let value = trimmed.slice(eqIdx + 1).trim();
     if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
+      value.length >= 2 &&
+      ((value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'")))
     ) {
       value = value.slice(1, -1);
     }
