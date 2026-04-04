@@ -306,171 +306,182 @@ export class WhatsAppChannel implements Channel {
 
     this.sock.ev.on('messages.upsert', async ({ messages }) => {
       for (const msg of messages) {
-        if (!msg.message) continue;
-        const rawJid = msg.key.remoteJid;
-        if (!rawJid || rawJid === 'status@broadcast') continue;
+        try {
+          if (!msg.message) continue;
+          const rawJid = msg.key.remoteJid;
+          if (!rawJid || rawJid === 'status@broadcast') continue;
 
-        // Translate LID JID to phone JID if applicable.
-        // Prefer senderPn from the message key (available in newer WA protocol)
-        // since translateJid may fail to resolve LID→phone via signalRepository.
-        let chatJid = await this.translateJid(rawJid);
-        if (chatJid.endsWith('@lid') && (msg.key as any).senderPn) {
-          const pn = (msg.key as any).senderPn as string;
-          const phoneJid = pn.includes('@') ? pn : `${pn}@s.whatsapp.net`;
-          this.setLidPhoneMapping(rawJid.split('@')[0].split(':')[0], phoneJid);
-          chatJid = phoneJid;
-          logger.info(
-            { lidJid: rawJid, phoneJid },
-            'Translated LID via senderPn',
-          );
-        }
-
-        const timestamp = new Date(
-          Number(msg.messageTimestamp) * 1000,
-        ).toISOString();
-
-        // Always notify about chat metadata for group discovery
-        const isGroup = chatJid.endsWith('@g.us');
-        this.opts.onChatMetadata(
-          chatJid,
-          timestamp,
-          undefined,
-          'whatsapp',
-          isGroup,
-        );
-
-        // Only deliver full message for registered groups
-        const groups = this.opts.registeredGroups();
-        if (groups[chatJid]) {
-          const normalized = normalizeMessageContent(msg.message);
-          let content =
-            normalized?.conversation ||
-            normalized?.extendedTextMessage?.text ||
-            normalized?.imageMessage?.caption ||
-            normalized?.videoMessage?.caption ||
-            '';
-
-          // Image attachment handling
-          if (isImageMessage(msg)) {
-            try {
-              const buffer = await downloadMediaMessage(msg, 'buffer', {});
-              const groupDir = path.join(GROUPS_DIR, groups[chatJid].folder);
-              const caption = normalized?.imageMessage?.caption ?? '';
-              const result = await processImage(
-                buffer as Buffer,
-                groupDir,
-                caption,
-              );
-              if (result) {
-                content = result.content;
-              }
-            } catch (err) {
-              logger.warn({ err, jid: chatJid }, 'Image - download failed');
-            }
-          }
-
-          // PDF attachment handling
-          if (normalized?.documentMessage?.mimetype === 'application/pdf') {
-            try {
-              const buffer = await downloadMediaMessage(msg, 'buffer', {});
-              const groupDir = path.join(GROUPS_DIR, groups[chatJid].folder);
-              const attachDir = path.join(groupDir, 'attachments');
-              fs.mkdirSync(attachDir, { recursive: true });
-              const filename = path.basename(
-                normalized.documentMessage.fileName || `doc-${Date.now()}.pdf`,
-              );
-              const filePath = path.join(attachDir, filename);
-              fs.writeFileSync(filePath, buffer as Buffer);
-              const sizeKB = Math.round((buffer as Buffer).length / 1024);
-              const pdfRef = `[PDF: attachments/${filename} (${sizeKB}KB)]\nUse: pdf-reader extract attachments/${filename}`;
-              const caption = normalized.documentMessage.caption || '';
-              content = caption ? `${caption}\n\n${pdfRef}` : pdfRef;
-              logger.info(
-                { jid: chatJid, filename },
-                'Downloaded PDF attachment',
-              );
-            } catch (err) {
-              logger.warn(
-                { err, jid: chatJid },
-                'Failed to download PDF attachment',
-              );
-            }
-          }
-
-          // Skip protocol messages with no text content (encryption keys, read receipts, etc.)
-          if (!content) continue;
-
-          // WhatsApp replaces @mentions with the user's internal LID/phone number.
-          // Translate bot mentions back to @AssistantName so trigger patterns match.
-          // Covers both phone-based and LID-based mentions.
-          if (this.sock.user) {
-            const phoneUser = this.sock.user.id.split(':')[0];
-            const lidUser = this.sock.user.lid?.split(':')[0];
-            const mentionPattern = new RegExp(
-              `@(${phoneUser}${lidUser ? '|' + lidUser : ''})\\b`,
-              'g',
+          // Translate LID JID to phone JID if applicable.
+          // Prefer senderPn from the message key (available in newer WA protocol)
+          // since translateJid may fail to resolve LID→phone via signalRepository.
+          let chatJid = await this.translateJid(rawJid);
+          if (chatJid.endsWith('@lid') && (msg.key as any).senderPn) {
+            const pn = (msg.key as any).senderPn as string;
+            const phoneJid = pn.includes('@') ? pn : `${pn}@s.whatsapp.net`;
+            this.setLidPhoneMapping(
+              rawJid.split('@')[0].split(':')[0],
+              phoneJid,
             );
-            content = content.replace(mentionPattern, `@${ASSISTANT_NAME}`);
-          }
-
-          // Detect thread replies via contextInfo (quoted message reference)
-          const contextInfo =
-            normalized?.extendedTextMessage?.contextInfo ||
-            normalized?.imageMessage?.contextInfo ||
-            normalized?.videoMessage?.contextInfo;
-          const threadMessageId = contextInfo?.stanzaId || undefined;
-
-          const rawSender = msg.key.participant || msg.key.remoteJid || '';
-          const sender = await this.translateJid(rawSender);
-          const senderName = msg.pushName || sender.split('@')[0];
-
-          const fromMe = msg.key.fromMe || false;
-          // Detect bot messages: with own number, fromMe is reliable
-          // since only the bot sends from that number.
-          // With shared number, bot messages carry the assistant name prefix
-          // (even in DMs/self-chat) so we check for that.
-          const isBotMessage = ASSISTANT_HAS_OWN_NUMBER
-            ? fromMe
-            : content.startsWith(`${ASSISTANT_NAME}:`);
-
-          // Cache this message for potential thread replies
-          const messageId = msg.key.id || '';
-          if (messageId) {
-            if (this.messageCache.size >= MESSAGE_CACHE_MAX) {
-              // Evict oldest entry
-              const firstKey = this.messageCache.keys().next().value;
-              if (firstKey) this.messageCache.delete(firstKey);
-            }
-            this.messageCache.set(messageId, {
-              id: messageId,
-              remoteJid: chatJid,
-              participant: msg.key.participant || undefined,
-              content,
-              fromMe,
-            });
-          } else if (chatJid !== rawJid) {
-            // LID translation produced a JID that doesn't match any registered group
-            logger.warn(
-              {
-                rawJid,
-                translatedJid: chatJid,
-                registeredJids: Object.keys(groups),
-              },
-              'Message JID not found in registered groups after translation',
+            chatJid = phoneJid;
+            logger.info(
+              { lidJid: rawJid, phoneJid },
+              'Translated LID via senderPn',
             );
           }
 
-          this.opts.onMessage(chatJid, {
-            id: messageId,
-            chat_jid: chatJid,
-            sender,
-            sender_name: senderName,
-            content,
+          const timestamp = new Date(
+            Number(msg.messageTimestamp) * 1000,
+          ).toISOString();
+
+          // Always notify about chat metadata for group discovery
+          const isGroup = chatJid.endsWith('@g.us');
+          this.opts.onChatMetadata(
+            chatJid,
             timestamp,
-            is_from_me: fromMe,
-            is_bot_message: isBotMessage,
-            thread_message_id: threadMessageId,
-          });
+            undefined,
+            'whatsapp',
+            isGroup,
+          );
+
+          // Only deliver full message for registered groups
+          const groups = this.opts.registeredGroups();
+          if (groups[chatJid]) {
+            const normalized = normalizeMessageContent(msg.message);
+            let content =
+              normalized?.conversation ||
+              normalized?.extendedTextMessage?.text ||
+              normalized?.imageMessage?.caption ||
+              normalized?.videoMessage?.caption ||
+              '';
+
+            // Image attachment handling
+            if (isImageMessage(msg)) {
+              try {
+                const buffer = await downloadMediaMessage(msg, 'buffer', {});
+                const groupDir = path.join(GROUPS_DIR, groups[chatJid].folder);
+                const caption = normalized?.imageMessage?.caption ?? '';
+                const result = await processImage(
+                  buffer as Buffer,
+                  groupDir,
+                  caption,
+                );
+                if (result) {
+                  content = result.content;
+                }
+              } catch (err) {
+                logger.warn({ err, jid: chatJid }, 'Image - download failed');
+              }
+            }
+
+            // PDF attachment handling
+            if (normalized?.documentMessage?.mimetype === 'application/pdf') {
+              try {
+                const buffer = await downloadMediaMessage(msg, 'buffer', {});
+                const groupDir = path.join(GROUPS_DIR, groups[chatJid].folder);
+                const attachDir = path.join(groupDir, 'attachments');
+                fs.mkdirSync(attachDir, { recursive: true });
+                const filename = path.basename(
+                  normalized.documentMessage.fileName ||
+                    `doc-${Date.now()}.pdf`,
+                );
+                const filePath = path.join(attachDir, filename);
+                fs.writeFileSync(filePath, buffer as Buffer);
+                const sizeKB = Math.round((buffer as Buffer).length / 1024);
+                const pdfRef = `[PDF: attachments/${filename} (${sizeKB}KB)]\nUse: pdf-reader extract attachments/${filename}`;
+                const caption = normalized.documentMessage.caption || '';
+                content = caption ? `${caption}\n\n${pdfRef}` : pdfRef;
+                logger.info(
+                  { jid: chatJid, filename },
+                  'Downloaded PDF attachment',
+                );
+              } catch (err) {
+                logger.warn(
+                  { err, jid: chatJid },
+                  'Failed to download PDF attachment',
+                );
+              }
+            }
+
+            // Skip protocol messages with no text content (encryption keys, read receipts, etc.)
+            if (!content) continue;
+
+            // WhatsApp replaces @mentions with the user's internal LID/phone number.
+            // Translate bot mentions back to @AssistantName so trigger patterns match.
+            // Covers both phone-based and LID-based mentions.
+            if (this.sock.user) {
+              const phoneUser = this.sock.user.id.split(':')[0];
+              const lidUser = this.sock.user.lid?.split(':')[0];
+              const mentionPattern = new RegExp(
+                `@(${phoneUser}${lidUser ? '|' + lidUser : ''})\\b`,
+                'g',
+              );
+              content = content.replace(mentionPattern, `@${ASSISTANT_NAME}`);
+            }
+
+            // Detect thread replies via contextInfo (quoted message reference)
+            const contextInfo =
+              normalized?.extendedTextMessage?.contextInfo ||
+              normalized?.imageMessage?.contextInfo ||
+              normalized?.videoMessage?.contextInfo;
+            const threadMessageId = contextInfo?.stanzaId || undefined;
+
+            const rawSender = msg.key.participant || msg.key.remoteJid || '';
+            const sender = await this.translateJid(rawSender);
+            const senderName = msg.pushName || sender.split('@')[0];
+
+            const fromMe = msg.key.fromMe || false;
+            // Detect bot messages: with own number, fromMe is reliable
+            // since only the bot sends from that number.
+            // With shared number, bot messages carry the assistant name prefix
+            // (even in DMs/self-chat) so we check for that.
+            const isBotMessage = ASSISTANT_HAS_OWN_NUMBER
+              ? fromMe
+              : content.startsWith(`${ASSISTANT_NAME}:`);
+
+            // Cache this message for potential thread replies
+            const messageId = msg.key.id || '';
+            if (messageId) {
+              if (this.messageCache.size >= MESSAGE_CACHE_MAX) {
+                // Evict oldest entry
+                const firstKey = this.messageCache.keys().next().value;
+                if (firstKey) this.messageCache.delete(firstKey);
+              }
+              this.messageCache.set(messageId, {
+                id: messageId,
+                remoteJid: chatJid,
+                participant: msg.key.participant || undefined,
+                content,
+                fromMe,
+              });
+            } else if (chatJid !== rawJid) {
+              // LID translation produced a JID that doesn't match any registered group
+              logger.warn(
+                {
+                  rawJid,
+                  translatedJid: chatJid,
+                  registeredJids: Object.keys(groups),
+                },
+                'Message JID not found in registered groups after translation',
+              );
+            }
+
+            this.opts.onMessage(chatJid, {
+              id: messageId,
+              chat_jid: chatJid,
+              sender,
+              sender_name: senderName,
+              content,
+              timestamp,
+              is_from_me: fromMe,
+              is_bot_message: isBotMessage,
+              thread_message_id: threadMessageId,
+            });
+          }
+        } catch (err) {
+          logger.error(
+            { err, remoteJid: msg.key?.remoteJid },
+            'Error processing incoming message',
+          );
         }
       }
     });
