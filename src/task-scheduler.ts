@@ -14,6 +14,7 @@ import {
   getTaskById,
   logTaskRun,
   logTokenUsage,
+  setSession,
   updateTask,
   updateTaskAfterRun,
 } from './db.js';
@@ -241,6 +242,18 @@ async function runTask(
 
     if (output.status === 'error') {
       error = output.error || 'Unknown error';
+      // Clear invalid session so next attempt starts fresh
+      if (
+        error.includes('No conversation found with session ID') &&
+        sessions[task.group_folder]
+      ) {
+        logger.info(
+          { taskId: task.id, folder: task.group_folder },
+          'Clearing invalid session after "not found" error (scheduled task)',
+        );
+        delete sessions[task.group_folder];
+        setSession(task.group_folder, '');
+      }
     } else if (output.result) {
       // Result was already forwarded to the user via the streaming callback above
       result = output.result;
