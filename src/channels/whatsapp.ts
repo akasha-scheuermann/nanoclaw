@@ -163,7 +163,43 @@ export class WhatsAppChannel implements Channel {
     const authDir = path.join(STORE_DIR, 'auth');
     fs.mkdirSync(authDir, { recursive: true });
 
-    const { state, saveCreds } = await useMultiFileAuthState(authDir);
+    const credsPath = path.join(authDir, 'creds.json');
+    const credsBackup = path.join(authDir, 'creds.json.bak');
+
+    // Restore from backup if creds.json is missing or empty (e.g. truncated
+    // by a mid-write crash) but a valid backup exists.
+    try {
+      const sz = fs.statSync(credsPath).size;
+      if (sz === 0) throw new Error('empty');
+    } catch {
+      try {
+        const bakSz = fs.statSync(credsBackup).size;
+        if (bakSz > 0) {
+          fs.copyFileSync(credsBackup, credsPath);
+          logger.info('Restored creds.json from backup');
+        }
+      } catch {
+        // No backup either — fresh auth will be needed
+      }
+    }
+
+    const { state, saveCreds: _saveCreds } =
+      await useMultiFileAuthState(authDir);
+
+    // Wrap saveCreds to keep a backup of the last known-good creds.json
+    // before Baileys overwrites it.  The backup lets us recover if the
+    // process is killed mid-write (which truncates the file to 0 bytes).
+    const saveCreds = async () => {
+      try {
+        const sz = fs.statSync(credsPath).size;
+        if (sz > 0) {
+          fs.copyFileSync(credsPath, credsBackup);
+        }
+      } catch {
+        // creds.json doesn't exist yet — nothing to back up
+      }
+      return _saveCreds();
+    };
 
     const { version } = await fetchLatestWaWebVersion({}).catch((err) => {
       logger.warn(
@@ -215,6 +251,12 @@ export class WhatsAppChannel implements Channel {
       const { connection, lastDisconnect, qr } = update;
 
       if (qr) {
+        // Detach creds listener BEFORE exiting — otherwise Baileys fires
+        // creds.update with fresh unregistered keys during the exit delay,
+        // and saveCreds overwrites the good creds.json.  This was the root
+        // cause of the "setup 3 times and creds keep vanishing" loop.
+        this.sock.ev.removeAllListeners('creds.update');
+
         const msg =
           'WhatsApp authentication required. Run /setup in Claude Code.';
         logger.error(msg);

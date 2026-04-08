@@ -74,7 +74,7 @@ class McpServerProcess {
     this.process.stderr!.on('data', (chunk: Buffer) => {
       const text = chunk.toString().trim();
       if (text) {
-        logger.debug({ server: this.config.name }, `MCP stderr: ${text}`);
+        logger.info({ server: this.config.name }, `MCP stderr: ${text}`);
       }
     });
 

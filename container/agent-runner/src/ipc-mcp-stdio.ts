@@ -1012,31 +1012,7 @@ Each item in recent includes:
 
 if (isMain) {
   server.tool(
-    'restart_nanoclaw',
-    'Restart the NanoClaw host process. The host will rebuild TypeScript (npm run build) before restarting, so any source edits take effect. Use after editing source code, after config changes, or when the system is misbehaving.',
-    {},
-    async () => {
-      const data = {
-        type: 'restart_nanoclaw',
-        groupFolder,
-        timestamp: new Date().toISOString(),
-      };
-
-      writeIpcFile(TASKS_DIR, data);
-
-      return {
-        content: [
-          {
-            type: 'text' as const,
-            text: 'NanoClaw restart requested. The host will build TypeScript and restart via the service manager.',
-          },
-        ],
-      };
-    },
-  );
-
-  server.tool(
-    'snapshot_groups',
+    'snapshot_repos',
     'Commit and push any changes in a repo to GitHub. Defaults to the groups/ userland repo. Pass repoPath to snapshot a different allowlisted repo (e.g. ~/Code/System/akasha-scripts). Skips cleanly if nothing has changed.',
     {
       message: z.string().optional().describe('Commit message describing what changed'),
@@ -1048,7 +1024,7 @@ if (isMain) {
 
       const requestId = `snapshot-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const data = {
-        type: 'snapshot_groups',
+        type: 'snapshot_repos',
         groupFolder,
         requestId,
         message: message || 'chore: snapshot agent workspaces',
@@ -1088,63 +1064,61 @@ if (isMain) {
   );
 
   server.tool(
-    'rebuild_container',
-    'Rebuild the NanoClaw agent container image on the host. Use after editing container source (agent-runner/, Dockerfile, container skills). The build runs on the host (not inside a container), so native dependencies are built for the correct architecture. New containers will use the updated image on next spawn.',
-    {},
-    async () => {
-      const BUILD_RESPONSES_DIR = path.join(IPC_DIR, 'build_responses');
-      fs.mkdirSync(BUILD_RESPONSES_DIR, { recursive: true });
+    'akasha',
+    'Run an akasha CLI command on the host. Manages all Akasha services: start, stop, restart, build, install, status. Services: nanoclaw, nanoclaw-container, reminders, calendar, mission-control, tasks-sync, backup-db, services-status.',
+    {
+      command: z.enum(['start', 'stop', 'restart', 'build', 'install', 'status']).describe('The akasha CLI command to run'),
+      service: z.string().optional().describe('Service name (e.g. nanoclaw, reminders, calendar, nanoclaw-container). Required for all commands except status.'),
+    },
+    async ({ command, service }) => {
+      const AKASHA_RESPONSES_DIR = path.join(IPC_DIR, 'akasha_responses');
+      fs.mkdirSync(AKASHA_RESPONSES_DIR, { recursive: true });
 
-      const requestId = `build-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const requestId = `akasha-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const data = {
-        type: 'rebuild_container',
+        type: 'akasha',
         groupFolder,
         requestId,
+        command,
+        service,
         timestamp: new Date().toISOString(),
       };
 
       writeIpcFile(TASKS_DIR, data);
 
-      // Poll for build result
-      const respPath = path.join(BUILD_RESPONSES_DIR, `${requestId}.json`);
-      const deadline = Date.now() + 300_000; // 5 minutes
+      // Special case: restart nanoclaw won't respond (process exits)
+      if (command === 'restart' && service === 'nanoclaw') {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: 'NanoClaw restart requested. The host will build TypeScript and restart.',
+          }],
+        };
+      }
+
+      // Poll for result
+      const respPath = path.join(AKASHA_RESPONSES_DIR, `${requestId}.json`);
+      const deadline = Date.now() + 300_000; // 5 minutes (builds can be slow)
       const POLL_INTERVAL = 1000;
 
       while (Date.now() < deadline) {
         if (fs.existsSync(respPath)) {
           const result = JSON.parse(fs.readFileSync(respPath, 'utf-8'));
           fs.unlinkSync(respPath);
-
-          if (result.success) {
-            return {
-              content: [
-                {
-                  type: 'text' as const,
-                  text: `Container rebuild completed successfully.\n\n${result.output || ''}`,
-                },
-              ],
-            };
-          } else {
-            return {
-              content: [
-                {
-                  type: 'text' as const,
-                  text: `Container rebuild failed: ${result.error}`,
-                },
-              ],
-            };
-          }
+          return {
+            content: [{
+              type: 'text' as const,
+              text: result.success
+                ? `✓ ${result.output || `${command} ${service || ''} completed`}`
+                : `Failed: ${result.error}`,
+            }],
+          };
         }
         await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL));
       }
 
       return {
-        content: [
-          {
-            type: 'text' as const,
-            text: 'Container rebuild timed out after 5 minutes. Check host logs for details.',
-          },
-        ],
+        content: [{ type: 'text' as const, text: `Akasha command timed out after 5 minutes. Check host logs.` }],
       };
     },
   );

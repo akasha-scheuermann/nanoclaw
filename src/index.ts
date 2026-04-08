@@ -13,6 +13,7 @@ import {
   MAX_MESSAGES_PER_PROMPT,
   ONECLI_URL,
   POLL_INTERVAL,
+  STORE_DIR,
   TIMEZONE,
 } from './config.js';
 import { startLogPruner } from './log-pruner.js';
@@ -81,6 +82,44 @@ import { logger } from './logger.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
+
+// --- PID lockfile: prevent two instances from running simultaneously ---
+const LOCK_FILE = path.join(STORE_DIR, 'nanoclaw.pid');
+
+function acquireLock(): void {
+  const myPid = process.pid;
+  try {
+    const existing = fs.readFileSync(LOCK_FILE, 'utf-8').trim();
+    const pid = Number(existing);
+    if (pid && pid !== myPid) {
+      try {
+        process.kill(pid, 0); // check if process exists
+        logger.fatal(
+          { existingPid: pid, myPid },
+          'Another NanoClaw instance is already running — aborting',
+        );
+        process.exit(1);
+      } catch {
+        // Process doesn't exist — stale lock, safe to overwrite
+        logger.warn({ stalePid: pid }, 'Removing stale PID lockfile');
+      }
+    }
+  } catch {
+    // Lock file doesn't exist or can't be read — fine
+  }
+  fs.writeFileSync(LOCK_FILE, String(myPid));
+}
+
+function releaseLock(): void {
+  try {
+    const content = fs.readFileSync(LOCK_FILE, 'utf-8').trim();
+    if (Number(content) === process.pid) {
+      fs.unlinkSync(LOCK_FILE);
+    }
+  } catch {
+    // Already gone
+  }
+}
 
 let lastTimestamp = '';
 let sessions: Record<string, string> = {};
@@ -837,6 +876,7 @@ function ensureContainerSystemRunning(): void {
 }
 
 async function main(): Promise<void> {
+  acquireLock();
   ensureContainerSystemRunning();
   initDatabase();
   logger.info('Database initialized');
@@ -861,8 +901,17 @@ async function main(): Promise<void> {
     cursorBeforePipe = {};
     saveState();
     for (const ch of channels) await ch.disconnect();
-    mcpBridge.stop();
-    await statusTracker.shutdown();
+    try {
+      mcpBridge.stop();
+    } catch {
+      /* not yet initialized */
+    }
+    try {
+      await statusTracker.shutdown();
+    } catch {
+      /* not yet initialized */
+    }
+    releaseLock();
     process.exit(0);
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));

@@ -186,19 +186,15 @@ export function startIpcWatcher(deps: IpcDeps): void {
             const filePath = path.join(tasksDir, file);
             try {
               const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+              // Delete before processing so hanging commands (e.g. akasha)
+              // don't get reprocessed after a restart
+              fs.unlinkSync(filePath);
               // Pass source group identity to processTaskIpc for authorization
               await processTaskIpc(data, sourceGroup, isMain, deps);
-              fs.unlinkSync(filePath);
             } catch (err) {
               logger.error(
                 { file, sourceGroup, err },
                 'Error processing IPC task',
-              );
-              const errorDir = path.join(ipcBaseDir, 'errors');
-              fs.mkdirSync(errorDir, { recursive: true });
-              fs.renameSync(
-                filePath,
-                path.join(errorDir, `${sourceGroup}-${file}`),
               );
             }
           }
@@ -330,9 +326,9 @@ export async function processTaskIpc(
     trigger?: string;
     requiresTrigger?: boolean;
     containerConfig?: RegisteredGroup['containerConfig'];
-    // For rebuild_container / snapshot_groups
+    // For rebuild_container / snapshot_repos
     requestId?: string;
-    // For snapshot_groups
+    // For snapshot_repos
     message?: string;
     repoPath?: string;
     // For work items
@@ -349,6 +345,9 @@ export async function processTaskIpc(
     // For reaction summary
     reactionDays?: number;
     reactionLimit?: number;
+    // For akasha commands
+    command?: string;
+    service?: string;
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
@@ -637,6 +636,7 @@ export async function processTaskIpc(
       break;
 
     case 'restart_nanoclaw':
+      // Legacy alias — treat as akasha restart nanoclaw
       if (!isMain) {
         logger.warn(
           { sourceGroup },
@@ -644,77 +644,142 @@ export async function processTaskIpc(
         );
         break;
       }
-      logger.info({ sourceGroup }, 'NanoClaw restart requested via IPC');
-      // Build TypeScript on the host before restarting so source edits take effect.
-      // This runs on macOS (not inside a container) so native modules stay intact.
+      logger.info(
+        { sourceGroup },
+        'NanoClaw restart requested via IPC (legacy)',
+      );
       try {
-        logger.info('Running npm run build before restart');
         execSync('npm run build', {
           cwd: process.cwd(),
           timeout: 30_000,
           stdio: 'pipe',
         });
-        logger.info('TypeScript build completed');
       } catch (err) {
         logger.error(
           { err },
           'TypeScript build failed — restarting with existing dist/',
         );
       }
-      // Brief delay to let IPC cleanup finish, then exit — launchd/systemd restarts us
       setTimeout(() => {
         logger.info('Exiting for restart');
         process.exit(0);
       }, 1500);
       break;
 
-    case 'rebuild_container': {
+    case 'akasha': {
       if (!isMain) {
         logger.warn(
           { sourceGroup },
-          'Unauthorized rebuild_container attempt blocked',
+          'Unauthorized akasha command attempt blocked',
         );
         break;
       }
-      logger.info({ sourceGroup }, 'Container rebuild requested via IPC');
-      const buildScript = path.join(process.cwd(), 'container', 'build.sh');
-      try {
-        const output = execSync(buildScript, {
-          cwd: process.cwd(),
-          timeout: 300_000, // 5 minutes
-          stdio: 'pipe',
-        });
-        logger.info('Container rebuild completed');
-        // Write result to IPC response file if requestId provided
+      const akashaCmd = data.command as string;
+      const akashaService = data.service as string | undefined;
+      const akashaCliPath = path.join(
+        os.homedir(),
+        'Code',
+        'System',
+        'akasha-scripts',
+        'akasha',
+      );
+
+      // Block build/restart for MCP servers — these require interactive macOS permission
+      // approval (Privacy & Security prompts) that can't be handled from a container.
+      const BLOCKED_MCP_SERVICES = ['reminders', 'calendar'];
+      const BLOCKED_MCP_COMMANDS = ['build', 'restart', 'stop', 'start'];
+      if (
+        akashaService &&
+        BLOCKED_MCP_SERVICES.includes(akashaService) &&
+        BLOCKED_MCP_COMMANDS.includes(akashaCmd)
+      ) {
+        const msg = `Blocked: '${akashaCmd} ${akashaService}' cannot run via IPC — MCP server builds/restarts require interactive macOS permission approval. Run manually on the host.`;
+        logger.warn(
+          { sourceGroup, cmd: akashaCmd, service: akashaService },
+          msg,
+        );
         if (data.requestId) {
-          const responseDir = path.join(
+          const AKASHA_RESPONSES_DIR = path.join(
             DATA_DIR,
             'ipc',
             sourceGroup,
-            'build_responses',
+            'akasha_responses',
           );
-          fs.mkdirSync(responseDir, { recursive: true });
+          fs.mkdirSync(AKASHA_RESPONSES_DIR, { recursive: true });
           fs.writeFileSync(
-            path.join(responseDir, `${data.requestId}.json`),
+            path.join(AKASHA_RESPONSES_DIR, `${data.requestId}.json`),
+            JSON.stringify({ error: msg }),
+          );
+        }
+        break;
+      }
+
+      // Special case: restart nanoclaw means exit the process (launchd restarts us)
+      if (akashaCmd === 'restart' && akashaService === 'nanoclaw') {
+        logger.info(
+          { sourceGroup },
+          'NanoClaw restart requested via akasha IPC',
+        );
+        try {
+          execSync('npm run build', {
+            cwd: process.cwd(),
+            timeout: 30_000,
+            stdio: 'pipe',
+          });
+          logger.info('TypeScript build completed');
+        } catch (err) {
+          logger.error(
+            { err },
+            'TypeScript build failed — restarting with existing dist/',
+          );
+        }
+        setTimeout(() => {
+          logger.info('Exiting for restart');
+          process.exit(0);
+        }, 1500);
+        break;
+      }
+
+      // All other commands: shell out to akasha CLI (with NANOCLAW_IPC env so scripts know they're called via IPC)
+      const fullCmd = akashaService
+        ? `NANOCLAW_IPC=1 "${akashaCliPath}" ${akashaCmd} ${akashaService}`
+        : `NANOCLAW_IPC=1 "${akashaCliPath}" ${akashaCmd}`;
+
+      logger.info(
+        { sourceGroup, cmd: fullCmd },
+        'Executing akasha command via IPC',
+      );
+
+      const AKASHA_RESPONSES_DIR = path.join(
+        DATA_DIR,
+        'ipc',
+        sourceGroup,
+        'akasha_responses',
+      );
+      try {
+        const output = execSync(fullCmd, {
+          cwd: process.cwd(),
+          timeout: 300_000, // 5 minutes (builds can be slow)
+          stdio: 'pipe',
+        });
+        logger.info({ cmd: fullCmd }, 'Akasha command completed');
+        if (data.requestId) {
+          fs.mkdirSync(AKASHA_RESPONSES_DIR, { recursive: true });
+          fs.writeFileSync(
+            path.join(AKASHA_RESPONSES_DIR, `${data.requestId}.json`),
             JSON.stringify({
               success: true,
-              output: output.toString().slice(-500),
+              output: output.toString().slice(-1000),
             }),
           );
         }
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
-        logger.error({ err }, 'Container rebuild failed');
+        logger.error({ err, cmd: fullCmd }, 'Akasha command failed');
         if (data.requestId) {
-          const responseDir = path.join(
-            DATA_DIR,
-            'ipc',
-            sourceGroup,
-            'build_responses',
-          );
-          fs.mkdirSync(responseDir, { recursive: true });
+          fs.mkdirSync(AKASHA_RESPONSES_DIR, { recursive: true });
           fs.writeFileSync(
-            path.join(responseDir, `${data.requestId}.json`),
+            path.join(AKASHA_RESPONSES_DIR, `${data.requestId}.json`),
             JSON.stringify({ success: false, error: errMsg }),
           );
         }
@@ -722,11 +787,11 @@ export async function processTaskIpc(
       break;
     }
 
-    case 'snapshot_groups': {
+    case 'snapshot_repos': {
       if (!isMain) {
         logger.warn(
           { sourceGroup },
-          'Unauthorized snapshot_groups attempt blocked',
+          'Unauthorized snapshot_repos attempt blocked',
         );
         break;
       }
@@ -734,6 +799,22 @@ export async function processTaskIpc(
       // Allow snapshotting other repos via repoPath (must be an allowlisted absolute path)
       const ALLOWED_SNAPSHOT_REPOS = [
         path.join(os.homedir(), 'Code', 'System', 'akasha-scripts'),
+        path.join(os.homedir(), 'Code', 'System', 'akasha-mission-control'),
+        path.join(
+          os.homedir(),
+          'Code',
+          'System',
+          'mcp-servers',
+          'apple-reminders-mcp',
+        ),
+        path.join(
+          os.homedir(),
+          'Code',
+          'System',
+          'mcp-servers',
+          'calendar-mcp',
+        ),
+        path.join(os.homedir(), 'Code', 'System', 'imsg'),
         path.join(os.homedir(), 'Engine', 'nanoclaw-skills'),
       ];
       let groupsDir: string;
@@ -744,7 +825,7 @@ export async function processTaskIpc(
         if (!ALLOWED_SNAPSHOT_REPOS.includes(resolved)) {
           logger.warn(
             { repoPath: data.repoPath },
-            'snapshot_groups: repo path not in allowlist',
+            'snapshot_repos: repo path not in allowlist',
           );
           if (data.requestId) {
             const respDir = path.join(
@@ -804,14 +885,14 @@ export async function processTaskIpc(
           }
           if (needsPush) {
             logger.info(
-              'snapshot_groups: nothing to commit but unpushed commits exist, pushing',
+              'snapshot_repos: nothing to commit but unpushed commits exist, pushing',
             );
             execSync('git push', {
               cwd: groupsDir,
               timeout: 30_000,
               stdio: 'pipe',
             });
-            logger.info('snapshot_groups: pushed unpushed commits');
+            logger.info('snapshot_repos: pushed unpushed commits');
             if (data.requestId) {
               fs.mkdirSync(SNAPSHOT_RESPONSES_DIR, { recursive: true });
               fs.writeFileSync(
@@ -823,7 +904,7 @@ export async function processTaskIpc(
               );
             }
           } else {
-            logger.info('snapshot_groups: nothing to commit');
+            logger.info('snapshot_repos: nothing to commit');
             if (data.requestId) {
               fs.mkdirSync(SNAPSHOT_RESPONSES_DIR, { recursive: true });
               fs.writeFileSync(
@@ -843,7 +924,7 @@ export async function processTaskIpc(
           timeout: 30_000,
           stdio: 'pipe',
         });
-        logger.info('snapshot_groups: committed and pushed');
+        logger.info('snapshot_repos: committed and pushed');
         if (data.requestId) {
           fs.mkdirSync(SNAPSHOT_RESPONSES_DIR, { recursive: true });
           fs.writeFileSync(
@@ -856,7 +937,7 @@ export async function processTaskIpc(
         }
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
-        logger.error({ err }, 'snapshot_groups failed');
+        logger.error({ err }, 'snapshot_repos failed');
         if (data.requestId) {
           fs.mkdirSync(SNAPSHOT_RESPONSES_DIR, { recursive: true });
           fs.writeFileSync(
