@@ -112,15 +112,14 @@ class IMessageChannel implements Channel {
         this.imsgPath,
         args,
         { timeout: SEND_TIMEOUT_MS },
-        (err, _stdout, stderr) => {
+        (err, stdout, stderr) => {
           if (err) {
+            const detail = stderr?.trim() || stdout?.trim() || err.message;
             logger.error(
-              { err, stderr: stderr?.trim(), jid },
+              { err, stdout: stdout?.trim(), stderr: stderr?.trim(), jid },
               'Failed to send iMessage',
             );
-            reject(
-              new Error(`imsg send failed: ${stderr?.trim() || err.message}`),
-            );
+            reject(new Error(`imsg send failed: ${detail}`));
             return;
           }
 

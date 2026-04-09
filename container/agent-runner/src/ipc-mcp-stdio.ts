@@ -757,7 +757,7 @@ server.tool(
 
 Always set outcome when marking done. Always set blocked_reason when marking blocked.`,
   {
-    id: z.number().describe('The work item ID (from create_work_item or list_work_items)'),
+    id: z.coerce.number().describe('The work item ID (from create_work_item or list_work_items)'),
     status: z
       .enum(['queued', 'in_progress', 'done', 'blocked', 'deferred'])
       .optional()
