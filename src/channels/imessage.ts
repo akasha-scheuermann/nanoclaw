@@ -238,6 +238,8 @@ class IMessageChannel implements Channel {
 
   private startWatch(): void {
     const args = ['watch', '--json'];
+    const startedAt = Date.now();
+    let stderrBuf = '';
 
     this.watchProcess = spawn(this.imsgPath, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -259,21 +261,26 @@ class IMessageChannel implements Channel {
     });
 
     this.watchProcess.stderr!.on('data', (chunk: Buffer) => {
-      const text = chunk.toString().trim();
-      if (text) {
-        logger.warn({ stderr: text }, 'imsg watch stderr');
-      }
+      stderrBuf += chunk.toString();
     });
 
     this.watchProcess.on('exit', (code, signal) => {
-      logger.warn({ code, signal }, 'imsg watch exited');
+      const aliveMs = Date.now() - startedAt;
+      const stderr = stderrBuf.trim();
+      logger.warn(
+        { code, signal, aliveMs, stderr: stderr || undefined },
+        'imsg watch exited',
+      );
       this.connected = false;
       this.watchProcess = null;
       this.readline = null;
+      // Only reset backoff if watch was stable (>30s)
+      if (aliveMs > 30_000) {
+        this.reconnectAttempt = 0;
+      }
       this.scheduleReconnect();
     });
 
-    this.reconnectAttempt = 0;
     logger.info('imsg watch started');
   }
 

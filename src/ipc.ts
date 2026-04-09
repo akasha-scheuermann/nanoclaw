@@ -816,6 +816,7 @@ export async function processTaskIpc(
         ),
         path.join(os.homedir(), 'Code', 'System', 'imsg'),
         path.join(os.homedir(), 'Engine', 'nanoclaw-skills'),
+        path.join(os.homedir(), 'Engine', 'nanoclaw'),
       ];
       let groupsDir: string;
       if (data.repoPath) {
