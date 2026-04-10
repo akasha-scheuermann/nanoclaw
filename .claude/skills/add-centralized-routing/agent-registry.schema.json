@@ -1,0 +1,64 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Agent Registry",
+  "description": "Capability manifests for all Akasha agents, enabling intent-based routing",
+  "type": "object",
+  "required": ["version", "agents"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "Schema version (semver)"
+    },
+    "agents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["folder", "name", "domains", "can_answer", "cannot_answer", "latency_tier"],
+        "properties": {
+          "folder": {
+            "type": "string",
+            "description": "Group folder name (e.g., whatsapp_fitness)"
+          },
+          "name": {
+            "type": "string",
+            "description": "Human-readable agent name (e.g., #fitness)"
+          },
+          "domains": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Topic domains this agent covers"
+          },
+          "data_access": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Vault Focus Areas and data sources accessible"
+          },
+          "can_answer": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Example queries this agent handles well"
+          },
+          "cannot_answer": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Query types that should NOT route here"
+          },
+          "latency_tier": {
+            "type": "string",
+            "enum": ["fast", "medium", "slow"],
+            "description": "Expected response time: fast (<5s), medium (<30s), slow (>30s)"
+          },
+          "tools": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Special tools/MCP servers this agent has access to"
+          },
+          "is_system": {
+            "type": "boolean",
+            "description": "True if this is a system/infrastructure agent (not domain-specific)"
+          }
+        }
+      }
+    }
+  }
+}

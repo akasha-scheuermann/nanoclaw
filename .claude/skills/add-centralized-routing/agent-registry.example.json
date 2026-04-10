@@ -1,0 +1,51 @@
+{
+  "version": "1.0.0",
+  "agents": [
+    {
+      "folder": "whatsapp_system",
+      "name": "#system",
+      "domains": [
+        "runtime management",
+        "agent configuration",
+        "infrastructure health"
+      ],
+      "data_access": [
+        "System Focus Area",
+        "Engine source",
+        "Database"
+      ],
+      "can_answer": [
+        "restart services",
+        "check agent health",
+        "update agent config"
+      ],
+      "cannot_answer": [
+        "domain-specific work"
+      ],
+      "latency_tier": "medium",
+      "tools": ["akasha", "database"],
+      "is_system": true
+    },
+    {
+      "folder": "whatsapp_example",
+      "name": "#example",
+      "domains": [
+        "example domain",
+        "sample queries"
+      ],
+      "data_access": [
+        "Example Focus Area"
+      ],
+      "can_answer": [
+        "example queries",
+        "sample requests"
+      ],
+      "cannot_answer": [
+        "other domains"
+      ],
+      "latency_tier": "fast",
+      "tools": [],
+      "is_system": false
+    }
+  ]
+}
