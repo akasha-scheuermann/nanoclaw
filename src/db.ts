@@ -158,6 +158,21 @@ function createSchema(database: Database.Database): void {
       reason TEXT,
       ignored_at DATETIME DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS agent_comms (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      request_id TEXT NOT NULL,
+      source_group TEXT NOT NULL,
+      target_group TEXT NOT NULL,
+      direction TEXT NOT NULL,
+      content TEXT NOT NULL,
+      status TEXT,
+      timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_comms_request ON agent_comms(request_id);
+    CREATE INDEX IF NOT EXISTS idx_agent_comms_source ON agent_comms(source_group);
+    CREATE INDEX IF NOT EXISTS idx_agent_comms_target ON agent_comms(target_group);
+    CREATE INDEX IF NOT EXISTS idx_agent_comms_timestamp ON agent_comms(timestamp);
   `);
 
   // Add context_mode column if it doesn't exist (migration for existing DBs)
@@ -708,6 +723,24 @@ export function getMessageContentById(
     .prepare(`SELECT content FROM messages WHERE id = ? AND chat_jid = ?`)
     .get(id, chatJid) as { content: string } | undefined;
   return row?.content;
+}
+
+/**
+ * Get message content and sender name for reply context.
+ * Used as a fallback when the in-memory cache misses and contextInfo
+ * doesn't contain the quoted message text.
+ */
+export function getMessageContentAndSender(
+  id: string,
+  chatJid: string,
+): { content: string; senderName: string } | undefined {
+  const row = db
+    .prepare(
+      `SELECT content, sender_name FROM messages WHERE id = ? AND chat_jid = ?`,
+    )
+    .get(id, chatJid) as { content: string; sender_name: string } | undefined;
+  if (!row) return undefined;
+  return { content: row.content, senderName: row.sender_name };
 }
 
 export function createTask(
@@ -1293,6 +1326,75 @@ export function updateWorkItem(
     `UPDATE agent_work_items SET ${fields.join(', ')} WHERE id = ?`,
   ).run(...values);
   return { success: true };
+}
+
+// --- Agent Communications Log ---
+
+export interface AgentComm {
+  id: number;
+  request_id: string;
+  source_group: string;
+  target_group: string;
+  direction: 'request' | 'response';
+  content: string;
+  status: string | null;
+  timestamp: string;
+}
+
+export function logAgentComm(comm: {
+  requestId: string;
+  sourceGroup: string;
+  targetGroup: string;
+  direction: 'request' | 'response';
+  content: string;
+  status?: string;
+}): void {
+  db.prepare(
+    `INSERT INTO agent_comms (request_id, source_group, target_group, direction, content, status)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(
+    comm.requestId,
+    comm.sourceGroup,
+    comm.targetGroup,
+    comm.direction,
+    comm.content,
+    comm.status ?? null,
+  );
+}
+
+export function getAgentComms(options?: {
+  sourceGroup?: string;
+  targetGroup?: string;
+  since?: string;
+  limit?: number;
+}): AgentComm[] {
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+
+  if (options?.sourceGroup) {
+    conditions.push('source_group = ?');
+    params.push(options.sourceGroup);
+  }
+  if (options?.targetGroup) {
+    conditions.push('target_group = ?');
+    params.push(options.targetGroup);
+  }
+  if (options?.since) {
+    conditions.push('timestamp >= ?');
+    params.push(options.since);
+  }
+
+  let sql = 'SELECT * FROM agent_comms';
+  if (conditions.length > 0) {
+    sql += ` WHERE ${conditions.join(' AND ')}`;
+  }
+  sql += ' ORDER BY timestamp DESC';
+
+  // Hardcode limit to avoid better-sqlite3 LIMIT ? bug
+  const limit = options?.limit ?? 100;
+  sql += ` LIMIT ${limit}`;
+
+  return db.prepare(sql).all(...params) as AgentComm[];
 }
 
 // --- JSON migration ---

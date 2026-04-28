@@ -621,11 +621,11 @@ Use available_groups.json to find the JID for a group. The folder name must be c
 
 server.tool(
   'call_agent',
-  'Call another agent and wait for a response. The target agent runs in isolated mode (fresh session, no conversation history) with your prompt. Use for cross-agent queries like asking a domain agent for status or data.\n\nThe target agent runs in its own container with its own tools, mounts, and CLAUDE.md. The response is the text output from that agent. Timeout is 300 seconds by default (the target needs time to spin up).\n\nTarget agents are identified by their group folder name (e.g., "whatsapp_research", "whatsapp_planning").',
+  'Call another agent and wait for a response. The target agent runs in isolated mode (fresh session, no conversation history) with your prompt. Use for cross-agent queries like asking a domain agent for status or data.\n\nThe target agent runs in its own container with its own tools, mounts, and CLAUDE.md. The response is the text output from that agent. Timeout is 600 seconds (10 minutes) by default (the target needs time to spin up).\n\nTarget agents are identified by their group folder name (e.g., "whatsapp_research", "whatsapp_planning").',
   {
     target_group: z.string().describe('Group folder name of the target agent (e.g., "whatsapp_research", "whatsapp_support")'),
     prompt: z.string().describe('The instruction/question to send to the target agent'),
-    timeout: z.number().optional().describe('Timeout in milliseconds (default: 300000 = 5 minutes)'),
+    timeout: z.number().optional().describe('Timeout in milliseconds (default: 600000 = 10 minutes)'),
   },
   async (args: { target_group: string; prompt: string; timeout?: number }) => {
     fs.mkdirSync(AGENT_REQUESTS_DIR, { recursive: true });
@@ -636,7 +636,7 @@ server.tool(
       requestId,
       targetGroup: args.target_group,
       prompt: args.prompt,
-      timeout: args.timeout || 300_000,
+      timeout: args.timeout || 600_000,
       timestamp: new Date().toISOString(),
     };
 
@@ -648,7 +648,7 @@ server.tool(
 
     // Poll for response
     const respPath = path.join(AGENT_RESPONSES_DIR, `${requestId}.json`);
-    const deadline = Date.now() + (args.timeout || 300_000);
+    const deadline = Date.now() + (args.timeout || 600_000);
     const POLL_INTERVAL = 500;
 
     while (Date.now() < deadline) {
@@ -665,7 +665,7 @@ server.tool(
     }
 
     return {
-      content: [{ type: 'text' as const, text: `Error: Agent call timed out after ${args.timeout || 120_000}ms. The target agent may still be processing.` }]
+      content: [{ type: 'text' as const, text: `Error: Agent call timed out after ${args.timeout || 600_000}ms. The target agent may still be processing.` }]
     };
   },
 );
@@ -1119,6 +1119,128 @@ if (isMain) {
 
       return {
         content: [{ type: 'text' as const, text: `Akasha command timed out after 5 minutes. Check host logs.` }],
+      };
+    },
+  );
+}
+
+// git_push tool - available to agents that have it in their mcp_allowlist
+if (isMain || isToolAllowed('git_push')) {
+  server.tool(
+    'git_push',
+    'Commit and push changes in a git repository. Routes through the host since containers lack git credentials. The repo path must be within your mounted directories.',
+    {
+      repoPath: z.string().describe('Absolute path to the git repository (must be within your mounted directories)'),
+      message: z.string().optional().describe('Commit message (default: "chore: update from agent")'),
+      branch: z.string().optional().describe('Branch to commit to (default: current branch)'),
+    },
+    async ({ repoPath, message, branch }) => {
+      const GIT_PUSH_RESPONSES_DIR = path.join(IPC_DIR, 'git_push_responses');
+      fs.mkdirSync(GIT_PUSH_RESPONSES_DIR, { recursive: true });
+
+      const requestId = `git-push-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const data = {
+        type: 'git_push',
+        groupFolder,
+        requestId,
+        repoPath,
+        message: message || 'chore: update from agent',
+        ...(branch ? { branch } : {}),
+        timestamp: new Date().toISOString(),
+      };
+
+      writeIpcFile(TASKS_DIR, data);
+
+      // Poll for result
+      const respPath = path.join(GIT_PUSH_RESPONSES_DIR, `${requestId}.json`);
+      const deadline = Date.now() + 60_000; // 60 seconds (git operations can be slow)
+      const POLL_INTERVAL = 500;
+
+      while (Date.now() < deadline) {
+        if (fs.existsSync(respPath)) {
+          const result = JSON.parse(fs.readFileSync(respPath, 'utf-8'));
+          fs.unlinkSync(respPath);
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: result.success
+                  ? `✓ ${result.output}`
+                  : `git_push failed: ${result.error}`,
+              },
+            ],
+          };
+        }
+        await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL));
+      }
+
+      return {
+        content: [{ type: 'text' as const, text: 'git_push timed out. Check host logs.' }],
+      };
+    },
+  );
+}
+
+// gh_pr tool - GitHub PR operations via gh CLI, routed through the host
+if (isMain || isToolAllowed('gh_pr')) {
+  server.tool(
+    'gh_pr',
+    'Create, view, or list GitHub pull requests. Routes through the host since containers lack gh CLI credentials. The repo path must be within your mounted directories.',
+    {
+      repoPath: z.string().describe('Absolute path to the git repository (must be within your mounted directories)'),
+      action: z.enum(['create', 'view', 'list']).describe('PR action to perform'),
+      title: z.string().optional().describe('PR title (for create action)'),
+      body: z.string().optional().describe('PR body/description (for create action)'),
+      base: z.string().optional().describe('Base branch for the PR (for create action, defaults to repo default)'),
+      draft: z.boolean().optional().describe('Create as draft PR (for create action)'),
+      prNumber: z.number().optional().describe('PR number (for view action, defaults to current branch PR)'),
+    },
+    async ({ repoPath, action, title, body, base, draft, prNumber }) => {
+      const GH_PR_RESPONSES_DIR = path.join(IPC_DIR, 'gh_pr_responses');
+      fs.mkdirSync(GH_PR_RESPONSES_DIR, { recursive: true });
+
+      const requestId = `gh-pr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const data = {
+        type: 'gh_pr',
+        groupFolder,
+        requestId,
+        repoPath,
+        prAction: action,
+        ...(title ? { prTitle: title } : {}),
+        ...(body ? { prBody: body } : {}),
+        ...(base ? { prBase: base } : {}),
+        ...(draft !== undefined ? { prDraft: draft } : {}),
+        ...(prNumber !== undefined ? { prNumber } : {}),
+        timestamp: new Date().toISOString(),
+      };
+
+      writeIpcFile(TASKS_DIR, data);
+
+      // Poll for result
+      const respPath = path.join(GH_PR_RESPONSES_DIR, `${requestId}.json`);
+      const deadline = Date.now() + 90_000; // 90 seconds (PR creation can be slow)
+      const POLL_INTERVAL = 500;
+
+      while (Date.now() < deadline) {
+        if (fs.existsSync(respPath)) {
+          const result = JSON.parse(fs.readFileSync(respPath, 'utf-8'));
+          fs.unlinkSync(respPath);
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: result.success
+                  ? `✓ ${result.output}`
+                  : `gh_pr failed: ${result.error}`,
+              },
+            ],
+          };
+        }
+        await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL));
+      }
+
+      return {
+        content: [{ type: 'text' as const, text: 'gh_pr timed out. Check host logs.' }],
       };
     },
   );

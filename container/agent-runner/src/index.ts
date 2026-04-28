@@ -523,6 +523,31 @@ async function runQuery(
     globalClaudeMd = fs.readFileSync(globalClaudeMdPath, 'utf-8');
   }
 
+  // Inject day-of-week context so agents don't miscalculate dates.
+  // The SDK's currentDate only provides "YYYY-MM-DD" — agents consistently
+  // get day-of-week wrong without this. The 14-day calendar grid gives agents
+  // a lookup table so they never need to compute date↔day-of-week mappings.
+  const now = new Date();
+  const dayName = now.toLocaleDateString('en-US', { weekday: 'long' });
+  const todayLine = `Today is ${dayName}, ${now.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}.`;
+
+  // Build a 14-day calendar grid (today + 13 days)
+  const calendarLines: string[] = [];
+  for (let i = 0; i < 14; i++) {
+    const d = new Date(now);
+    d.setDate(d.getDate() + i);
+    const label = i === 0 ? ' ← today' : '';
+    calendarLines.push(
+      `  ${d.toLocaleDateString('en-US', { weekday: 'short' })} ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}${label}`,
+    );
+  }
+  const dateContext = `\n\n# Today\n${todayLine}\n\nDate reference (use this when converting day names to dates):\n${calendarLines.join('\n')}\n`;
+  if (globalClaudeMd) {
+    globalClaudeMd += dateContext;
+  } else {
+    globalClaudeMd = dateContext.trim();
+  }
+
   // Discover additional directories mounted at /workspace/extra/*
   // These are passed to the SDK so their CLAUDE.md files are loaded automatically.
   // Mounts configured with loadClaudeMd: false in container_config are excluded via
