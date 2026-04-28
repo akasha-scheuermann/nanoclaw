@@ -14,6 +14,7 @@ import {
   getReactionSummaryForGroup,
   getTaskById,
   listWorkItems,
+  logAgentComm,
   updateTask,
   updateWorkItem,
 } from './db.js';
@@ -1166,6 +1167,7 @@ async function processMcpRequest(
 }
 
 const MAX_CONCURRENT_AGENT_CALLS = 2;
+const DEFAULT_CROSS_AGENT_TIMEOUT = 5 * 60 * 1000; // 5 minutes for cross-agent calls
 
 // Read cross-agent internal group from .env file (not process.env — launchd plist doesn't inject it).
 const _envCrossAgent = readEnvFile(['CROSS_AGENT_INTERNAL_GROUP']);
@@ -1273,8 +1275,15 @@ async function processAgentCallRequest(
     'Processing cross-agent call',
   );
 
-  // Chat visibility: forward call preview to internal comms group (or source group as fallback)
-  const crossAgentVisibility = process.env.CROSS_AGENT_VISIBILITY !== 'false'; // enabled by default
+  // Visibility modes: 'log' (default), 'chat', 'both', 'false'
+  // - 'log': log to agent_comms table only (no WhatsApp clutter)
+  // - 'chat': send to WhatsApp only (legacy behavior)
+  // - 'both': log + WhatsApp
+  // - 'false': disabled entirely
+  const visibilityMode = process.env.CROSS_AGENT_VISIBILITY || 'log';
+  const shouldLog = visibilityMode === 'log' || visibilityMode === 'both';
+  const shouldChat = visibilityMode === 'chat' || visibilityMode === 'both';
+
   const sourceEntry = Object.entries(registeredGroups).find(
     ([_, g]) => g.folder === sourceGroup,
   );
@@ -1289,7 +1298,19 @@ async function processAgentCallRequest(
     : undefined;
   const visibilityJid = internalEntry?.[0] ?? sourceJid;
 
-  if (crossAgentVisibility && visibilityJid) {
+  // Always log request to agent_comms table (unless disabled)
+  if (shouldLog) {
+    logAgentComm({
+      requestId: data.requestId,
+      sourceGroup,
+      targetGroup: data.targetGroup,
+      direction: 'request',
+      content: data.prompt,
+    });
+  }
+
+  // Optionally forward to WhatsApp chat
+  if (shouldChat && visibilityJid) {
     const preview =
       data.prompt.length > 500 ? data.prompt.slice(0, 500) + '…' : data.prompt;
     sendMessage(
@@ -1341,8 +1362,20 @@ async function processAgentCallRequest(
             'Cross-agent call: response written (streaming)',
           );
 
-          // Forward the response to the visibility group's chat
-          if (crossAgentVisibility && visibilityJid) {
+          // Log response to agent_comms table
+          if (shouldLog) {
+            logAgentComm({
+              requestId: data.requestId,
+              sourceGroup,
+              targetGroup: data.targetGroup,
+              direction: 'response',
+              content: streamedOutput.result,
+              status: streamedOutput.status,
+            });
+          }
+
+          // Optionally forward the response to WhatsApp chat
+          if (shouldChat && visibilityJid) {
             const responsePreview =
               streamedOutput.result.length > 500
                 ? streamedOutput.result.slice(0, 500) + '…'
@@ -1373,6 +1406,7 @@ async function processAgentCallRequest(
           }
         }
       },
+      { timeoutMs: data.timeout || DEFAULT_CROSS_AGENT_TIMEOUT },
     );
 
     // Fallback: if streaming never produced a result with text, use final output
@@ -1395,8 +1429,20 @@ async function processAgentCallRequest(
         'Cross-agent call completed (fallback)',
       );
 
-      // Forward the response to the visibility group's chat
-      if (crossAgentVisibility && visibilityJid) {
+      // Log response to agent_comms table
+      if (shouldLog) {
+        logAgentComm({
+          requestId: data.requestId,
+          sourceGroup,
+          targetGroup: data.targetGroup,
+          direction: 'response',
+          content: resultText,
+          status: output.status,
+        });
+      }
+
+      // Optionally forward the response to WhatsApp chat
+      if (shouldChat && visibilityJid) {
         const responsePreview =
           resultText.length > 500 ? resultText.slice(0, 500) + '…' : resultText;
         sendMessage(
