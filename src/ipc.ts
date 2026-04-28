@@ -329,9 +329,17 @@ export async function processTaskIpc(
     containerConfig?: RegisteredGroup['containerConfig'];
     // For rebuild_container / snapshot_repos
     requestId?: string;
-    // For snapshot_repos
+    // For snapshot_repos / git_push
     message?: string;
     repoPath?: string;
+    branch?: string;
+    // For gh_pr
+    prAction?: 'create' | 'view' | 'list';
+    prTitle?: string;
+    prBody?: string;
+    prBase?: string;
+    prDraft?: boolean;
+    prNumber?: number;
     // For work items
     workItemId?: number;
     workItemTitle?: string;
@@ -944,6 +952,561 @@ export async function processTaskIpc(
           fs.mkdirSync(SNAPSHOT_RESPONSES_DIR, { recursive: true });
           fs.writeFileSync(
             path.join(SNAPSHOT_RESPONSES_DIR, `${data.requestId}.json`),
+            JSON.stringify({ success: false, error: errMsg }),
+          );
+        }
+      }
+      break;
+    }
+
+    case 'git_push': {
+      // Git push tool - routes git operations through the host (containers don't have credentials)
+      // Authorization: check if agent has git_push in their mcp_allowlist
+      const sourceGroupInfo = Object.values(registeredGroups).find(
+        (g) => g.folder === sourceGroup,
+      );
+      const allowedTools =
+        sourceGroupInfo?.containerConfig?.allowedMcpTools ?? [];
+      const hasGitPush = allowedTools.some(
+        (tool) => tool === 'git_push' || tool === 'mcp__nanoclaw__git_push',
+      );
+      if (!isMain && !hasGitPush) {
+        logger.warn(
+          { sourceGroup },
+          'Unauthorized git_push attempt blocked (not in mcp_allowlist)',
+        );
+        if (data.requestId) {
+          const respDir = path.join(
+            DATA_DIR,
+            'ipc',
+            sourceGroup,
+            'git_push_responses',
+          );
+          fs.mkdirSync(respDir, { recursive: true });
+          fs.writeFileSync(
+            path.join(respDir, `${data.requestId}.json`),
+            JSON.stringify({
+              success: false,
+              error: 'git_push not in mcp_allowlist for this agent',
+            }),
+          );
+        }
+        break;
+      }
+
+      const repoPath = data.repoPath as string | undefined;
+      const commitMessage =
+        (data.message as string) || 'chore: update from agent';
+      const branch = data.branch as string | undefined;
+
+      if (!repoPath) {
+        if (data.requestId) {
+          const respDir = path.join(
+            DATA_DIR,
+            'ipc',
+            sourceGroup,
+            'git_push_responses',
+          );
+          fs.mkdirSync(respDir, { recursive: true });
+          fs.writeFileSync(
+            path.join(respDir, `${data.requestId}.json`),
+            JSON.stringify({ success: false, error: 'repoPath is required' }),
+          );
+        }
+        break;
+      }
+
+      // Translate container path to host path
+      // Container paths look like /workspace/extra/{containerPath}/...
+      // We need to map them back to host paths using the mount config
+      const mounts = sourceGroupInfo?.containerConfig?.additionalMounts ?? [];
+      logger.info(
+        {
+          sourceGroup,
+          repoPath,
+          mountCount: mounts.length,
+          mounts: mounts.map((m) => ({
+            cp: m.containerPath,
+            hp: m.hostPath,
+            ro: m.readonly,
+          })),
+        },
+        'git_push: debug mount resolution',
+      );
+      let resolvedPath: string;
+      let isPathAllowed = false;
+
+      if (repoPath.startsWith('/workspace/extra/')) {
+        // Container path - translate to host path
+        const containerRelative = repoPath.slice('/workspace/extra/'.length);
+        for (const mount of mounts) {
+          const containerMountPath = mount.containerPath;
+          if (!containerMountPath) continue;
+          if (
+            containerRelative === containerMountPath ||
+            containerRelative.startsWith(containerMountPath + '/')
+          ) {
+            const subPath = containerRelative.slice(containerMountPath.length);
+            const hostBase = path.resolve(
+              mount.hostPath.replace(/^~/, os.homedir()),
+            );
+            resolvedPath = path.join(hostBase, subPath);
+            isPathAllowed = !mount.readonly;
+            break;
+          }
+        }
+        if (!resolvedPath!) {
+          // No matching mount found
+          if (data.requestId) {
+            const respDir = path.join(
+              DATA_DIR,
+              'ipc',
+              sourceGroup,
+              'git_push_responses',
+            );
+            fs.mkdirSync(respDir, { recursive: true });
+            fs.writeFileSync(
+              path.join(respDir, `${data.requestId}.json`),
+              JSON.stringify({
+                success: false,
+                error: `Container path not in any mount: ${repoPath}`,
+              }),
+            );
+          }
+          break;
+        }
+      } else {
+        // Host path (from main group or direct path) - resolve as before
+        resolvedPath = path.resolve(repoPath.replace(/^~/, os.homedir()));
+        isPathAllowed = mounts.some((mount) => {
+          const mountHostPath = path.resolve(
+            mount.hostPath.replace(/^~/, os.homedir()),
+          );
+          return resolvedPath.startsWith(mountHostPath) && !mount.readonly;
+        });
+      }
+
+      logger.info(
+        { isMain, isPathAllowed, resolvedPath, originalRepoPath: repoPath },
+        'git_push: path resolution complete',
+      );
+      if (!isMain && !isPathAllowed) {
+        logger.warn(
+          { sourceGroup, repoPath: resolvedPath },
+          'git_push: path not in agent mounts or is readonly',
+        );
+        if (data.requestId) {
+          const respDir = path.join(
+            DATA_DIR,
+            'ipc',
+            sourceGroup,
+            'git_push_responses',
+          );
+          fs.mkdirSync(respDir, { recursive: true });
+          fs.writeFileSync(
+            path.join(respDir, `${data.requestId}.json`),
+            JSON.stringify({
+              success: false,
+              error: `Path not allowed or is readonly: ${repoPath}`,
+            }),
+          );
+        }
+        break;
+      }
+
+      // Verify it's a git repo
+      if (!fs.existsSync(path.join(resolvedPath, '.git'))) {
+        if (data.requestId) {
+          const respDir = path.join(
+            DATA_DIR,
+            'ipc',
+            sourceGroup,
+            'git_push_responses',
+          );
+          fs.mkdirSync(respDir, { recursive: true });
+          fs.writeFileSync(
+            path.join(respDir, `${data.requestId}.json`),
+            JSON.stringify({
+              success: false,
+              error: `Not a git repository: ${repoPath}`,
+            }),
+          );
+        }
+        break;
+      }
+
+      const GIT_PUSH_RESPONSES_DIR = path.join(
+        DATA_DIR,
+        'ipc',
+        sourceGroup,
+        'git_push_responses',
+      );
+      logger.info(
+        { sourceGroup, repoPath: resolvedPath, commitMessage },
+        'git_push requested',
+      );
+
+      try {
+        // Checkout branch if specified
+        if (branch) {
+          try {
+            execSync(`git checkout ${branch}`, {
+              cwd: resolvedPath,
+              stdio: 'pipe',
+            });
+          } catch {
+            // Branch might not exist, try creating it
+            execSync(`git checkout -b ${branch}`, {
+              cwd: resolvedPath,
+              stdio: 'pipe',
+            });
+          }
+        }
+
+        // Stage all changes
+        execSync('git add -A', { cwd: resolvedPath, stdio: 'pipe' });
+
+        // Check if there's anything to commit
+        let nothingToCommit = false;
+        try {
+          execSync('git diff --cached --quiet', {
+            cwd: resolvedPath,
+            stdio: 'pipe',
+          });
+          nothingToCommit = true;
+        } catch {
+          // non-zero exit = staged changes exist
+        }
+
+        if (nothingToCommit) {
+          // Check for unpushed commits
+          let needsPush = false;
+          try {
+            const ahead = execSync('git rev-list --count @{u}..HEAD', {
+              cwd: resolvedPath,
+              stdio: 'pipe',
+            })
+              .toString()
+              .trim();
+            needsPush = parseInt(ahead, 10) > 0;
+          } catch {
+            // No upstream or error — skip push check
+          }
+
+          if (needsPush) {
+            execSync('git push', {
+              cwd: resolvedPath,
+              timeout: 30_000,
+              stdio: 'pipe',
+            });
+            logger.info(
+              { repoPath: resolvedPath },
+              'git_push: pushed unpushed commits',
+            );
+            if (data.requestId) {
+              fs.mkdirSync(GIT_PUSH_RESPONSES_DIR, { recursive: true });
+              fs.writeFileSync(
+                path.join(GIT_PUSH_RESPONSES_DIR, `${data.requestId}.json`),
+                JSON.stringify({
+                  success: true,
+                  output: 'Nothing to commit. Pushed unpushed commits.',
+                }),
+              );
+            }
+          } else {
+            logger.info(
+              { repoPath: resolvedPath },
+              'git_push: nothing to commit or push',
+            );
+            if (data.requestId) {
+              fs.mkdirSync(GIT_PUSH_RESPONSES_DIR, { recursive: true });
+              fs.writeFileSync(
+                path.join(GIT_PUSH_RESPONSES_DIR, `${data.requestId}.json`),
+                JSON.stringify({
+                  success: true,
+                  output: 'Nothing to commit or push.',
+                }),
+              );
+            }
+          }
+          break;
+        }
+
+        // Commit and push
+        execSync(`git commit -m ${JSON.stringify(commitMessage)}`, {
+          cwd: resolvedPath,
+          stdio: 'pipe',
+        });
+        execSync('git push', {
+          cwd: resolvedPath,
+          timeout: 30_000,
+          stdio: 'pipe',
+        });
+        logger.info(
+          { repoPath: resolvedPath, commitMessage },
+          'git_push: committed and pushed',
+        );
+
+        if (data.requestId) {
+          fs.mkdirSync(GIT_PUSH_RESPONSES_DIR, { recursive: true });
+          fs.writeFileSync(
+            path.join(GIT_PUSH_RESPONSES_DIR, `${data.requestId}.json`),
+            JSON.stringify({
+              success: true,
+              output: `Committed and pushed: ${commitMessage}`,
+            }),
+          );
+        }
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        logger.error({ err, repoPath: resolvedPath }, 'git_push failed');
+        if (data.requestId) {
+          fs.mkdirSync(GIT_PUSH_RESPONSES_DIR, { recursive: true });
+          fs.writeFileSync(
+            path.join(GIT_PUSH_RESPONSES_DIR, `${data.requestId}.json`),
+            JSON.stringify({ success: false, error: errMsg }),
+          );
+        }
+      }
+      break;
+    }
+
+    case 'gh_pr': {
+      // GitHub PR tool - routes gh CLI operations through the host
+      // Authorization: check if agent has gh_pr in their mcp_allowlist
+      const ghSourceGroupInfo = Object.values(registeredGroups).find(
+        (g) => g.folder === sourceGroup,
+      );
+      const ghAllowedTools =
+        ghSourceGroupInfo?.containerConfig?.allowedMcpTools ?? [];
+      const hasGhPr = ghAllowedTools.some(
+        (tool) => tool === 'gh_pr' || tool === 'mcp__nanoclaw__gh_pr',
+      );
+      if (!isMain && !hasGhPr) {
+        logger.warn(
+          { sourceGroup },
+          'Unauthorized gh_pr attempt blocked (not in mcp_allowlist)',
+        );
+        if (data.requestId) {
+          const respDir = path.join(
+            DATA_DIR,
+            'ipc',
+            sourceGroup,
+            'gh_pr_responses',
+          );
+          fs.mkdirSync(respDir, { recursive: true });
+          fs.writeFileSync(
+            path.join(respDir, `${data.requestId}.json`),
+            JSON.stringify({
+              success: false,
+              error: 'gh_pr not in mcp_allowlist for this agent',
+            }),
+          );
+        }
+        break;
+      }
+
+      const ghRepoPath = data.repoPath as string | undefined;
+      const prAction = data.prAction as 'create' | 'view' | 'list' | undefined;
+
+      if (!ghRepoPath || !prAction) {
+        if (data.requestId) {
+          const respDir = path.join(
+            DATA_DIR,
+            'ipc',
+            sourceGroup,
+            'gh_pr_responses',
+          );
+          fs.mkdirSync(respDir, { recursive: true });
+          fs.writeFileSync(
+            path.join(respDir, `${data.requestId}.json`),
+            JSON.stringify({
+              success: false,
+              error: 'repoPath and prAction are required',
+            }),
+          );
+        }
+        break;
+      }
+
+      // Translate container path to host path (same logic as git_push)
+      const ghMounts =
+        ghSourceGroupInfo?.containerConfig?.additionalMounts ?? [];
+      let ghResolvedPath: string | undefined;
+      let ghPathAllowed = false;
+
+      if (ghRepoPath.startsWith('/workspace/extra/')) {
+        const containerRelative = ghRepoPath.slice('/workspace/extra/'.length);
+        for (const mount of ghMounts) {
+          const containerMountPath = mount.containerPath;
+          if (!containerMountPath) continue;
+          if (
+            containerRelative === containerMountPath ||
+            containerRelative.startsWith(containerMountPath + '/')
+          ) {
+            const subPath = containerRelative.slice(containerMountPath.length);
+            const hostBase = path.resolve(
+              mount.hostPath.replace(/^~/, os.homedir()),
+            );
+            ghResolvedPath = path.join(hostBase, subPath);
+            ghPathAllowed = true; // gh pr doesn't require write access
+            break;
+          }
+        }
+        if (!ghResolvedPath) {
+          if (data.requestId) {
+            const respDir = path.join(
+              DATA_DIR,
+              'ipc',
+              sourceGroup,
+              'gh_pr_responses',
+            );
+            fs.mkdirSync(respDir, { recursive: true });
+            fs.writeFileSync(
+              path.join(respDir, `${data.requestId}.json`),
+              JSON.stringify({
+                success: false,
+                error: `Container path not in any mount: ${ghRepoPath}`,
+              }),
+            );
+          }
+          break;
+        }
+      } else {
+        // Host path (from main group)
+        ghResolvedPath = path.resolve(ghRepoPath.replace(/^~/, os.homedir()));
+        ghPathAllowed = ghMounts.some((mount) => {
+          const mountHostPath = path.resolve(
+            mount.hostPath.replace(/^~/, os.homedir()),
+          );
+          return ghResolvedPath!.startsWith(mountHostPath);
+        });
+      }
+
+      if (!isMain && !ghPathAllowed) {
+        logger.warn(
+          { sourceGroup, repoPath: ghResolvedPath },
+          'gh_pr: path not in agent mounts',
+        );
+        if (data.requestId) {
+          const respDir = path.join(
+            DATA_DIR,
+            'ipc',
+            sourceGroup,
+            'gh_pr_responses',
+          );
+          fs.mkdirSync(respDir, { recursive: true });
+          fs.writeFileSync(
+            path.join(respDir, `${data.requestId}.json`),
+            JSON.stringify({
+              success: false,
+              error: `Path not in allowed mounts: ${ghRepoPath}`,
+            }),
+          );
+        }
+        break;
+      }
+
+      // Verify it's a git repo
+      if (!fs.existsSync(path.join(ghResolvedPath, '.git'))) {
+        if (data.requestId) {
+          const respDir = path.join(
+            DATA_DIR,
+            'ipc',
+            sourceGroup,
+            'gh_pr_responses',
+          );
+          fs.mkdirSync(respDir, { recursive: true });
+          fs.writeFileSync(
+            path.join(respDir, `${data.requestId}.json`),
+            JSON.stringify({
+              success: false,
+              error: `Not a git repository: ${ghRepoPath}`,
+            }),
+          );
+        }
+        break;
+      }
+
+      const GH_PR_RESPONSES_DIR = path.join(
+        DATA_DIR,
+        'ipc',
+        sourceGroup,
+        'gh_pr_responses',
+      );
+      logger.info(
+        { sourceGroup, repoPath: ghResolvedPath, prAction },
+        'gh_pr requested',
+      );
+
+      try {
+        let ghCommand: string;
+        let output: string;
+
+        switch (prAction) {
+          case 'create': {
+            const title = data.prTitle || 'Update from agent';
+            const body = data.prBody || '';
+            const base = data.prBase ? `--base ${data.prBase}` : '';
+            const draft = data.prDraft ? '--draft' : '';
+            ghCommand =
+              `gh pr create --title ${JSON.stringify(title)} --body ${JSON.stringify(body)} ${base} ${draft}`.trim();
+            output = execSync(ghCommand, {
+              cwd: ghResolvedPath,
+              timeout: 60_000,
+              stdio: 'pipe',
+            })
+              .toString()
+              .trim();
+            break;
+          }
+          case 'view': {
+            const prNum = data.prNumber ? String(data.prNumber) : '';
+            ghCommand = `gh pr view ${prNum} --json number,title,state,url,body,author,headRefName,baseRefName`;
+            output = execSync(ghCommand, {
+              cwd: ghResolvedPath,
+              timeout: 30_000,
+              stdio: 'pipe',
+            })
+              .toString()
+              .trim();
+            break;
+          }
+          case 'list': {
+            ghCommand =
+              'gh pr list --json number,title,state,url,author,headRefName';
+            output = execSync(ghCommand, {
+              cwd: ghResolvedPath,
+              timeout: 30_000,
+              stdio: 'pipe',
+            })
+              .toString()
+              .trim();
+            break;
+          }
+          default:
+            throw new Error(`Unknown prAction: ${prAction}`);
+        }
+
+        logger.info({ repoPath: ghResolvedPath, prAction }, 'gh_pr: completed');
+
+        if (data.requestId) {
+          fs.mkdirSync(GH_PR_RESPONSES_DIR, { recursive: true });
+          fs.writeFileSync(
+            path.join(GH_PR_RESPONSES_DIR, `${data.requestId}.json`),
+            JSON.stringify({ success: true, output }),
+          );
+        }
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        logger.error(
+          { err, repoPath: ghResolvedPath, prAction },
+          'gh_pr failed',
+        );
+        if (data.requestId) {
+          fs.mkdirSync(GH_PR_RESPONSES_DIR, { recursive: true });
+          fs.writeFileSync(
+            path.join(GH_PR_RESPONSES_DIR, `${data.requestId}.json`),
             JSON.stringify({ success: false, error: errMsg }),
           );
         }
