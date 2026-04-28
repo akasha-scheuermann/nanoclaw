@@ -710,6 +710,24 @@ export function getMessageContentById(
   return row?.content;
 }
 
+/**
+ * Get message content and sender name for reply context.
+ * Used as a fallback when the in-memory cache misses and contextInfo
+ * doesn't contain the quoted message text.
+ */
+export function getMessageContentAndSender(
+  id: string,
+  chatJid: string,
+): { content: string; senderName: string } | undefined {
+  const row = db
+    .prepare(
+      `SELECT content, sender_name FROM messages WHERE id = ? AND chat_jid = ?`,
+    )
+    .get(id, chatJid) as { content: string; sender_name: string } | undefined;
+  if (!row) return undefined;
+  return { content: row.content, senderName: row.sender_name };
+}
+
 export function createTask(
   task: Omit<ScheduledTask, 'last_run' | 'last_result'>,
 ): void {

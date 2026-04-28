@@ -36,6 +36,7 @@ import {
   getLastGroupSync,
   getLatestMessage,
   getMessageContentById,
+  getMessageContentAndSender,
   setLastGroupSync,
   storeReaction,
   updateChatName,
@@ -113,6 +114,7 @@ interface CachedMessage {
   id: string;
   remoteJid: string;
   participant?: string; // sender JID in group messages
+  senderName?: string; // display name for reply context
   content: string;
   fromMe: boolean;
 }
@@ -467,6 +469,61 @@ export class WhatsAppChannel implements Channel {
               normalized?.videoMessage?.contextInfo;
             const threadMessageId = contextInfo?.stanzaId || undefined;
 
+            // Extract quoted message content and sender for reply context
+            let replyToMessageContent: string | undefined;
+            let replyToSenderName: string | undefined;
+            if (threadMessageId) {
+              // First, check if we have the original message in cache
+              const cachedQuoted = this.messageCache.get(threadMessageId);
+              if (cachedQuoted) {
+                replyToMessageContent = cachedQuoted.content;
+                replyToSenderName = cachedQuoted.senderName;
+              } else if (contextInfo?.quotedMessage) {
+                // Fall back to extracting from contextInfo
+                const quoted = contextInfo.quotedMessage;
+                // Extract text from various message types
+                replyToMessageContent =
+                  quoted.conversation ||
+                  quoted.extendedTextMessage?.text ||
+                  quoted.imageMessage?.caption ||
+                  quoted.videoMessage?.caption ||
+                  (quoted.imageMessage ? '[image]' : undefined) ||
+                  (quoted.videoMessage ? '[video]' : undefined) ||
+                  (quoted.audioMessage ? '[audio]' : undefined) ||
+                  (quoted.documentMessage
+                    ? `[document: ${quoted.documentMessage.fileName || 'file'}]`
+                    : undefined) ||
+                  (quoted.stickerMessage ? '[sticker]' : undefined);
+
+                // Get sender name from participant JID
+                if (contextInfo.participant) {
+                  const quotedSender = await this.translateJid(
+                    contextInfo.participant,
+                  );
+                  replyToSenderName = quotedSender.split('@')[0];
+                }
+              }
+
+              // Final fallback: look up the quoted message in the database
+              // This handles cases where the message cache has evicted the entry
+              // and contextInfo.quotedMessage doesn't contain the text
+              if (!replyToMessageContent) {
+                const dbMessage = getMessageContentAndSender(
+                  threadMessageId,
+                  chatJid,
+                );
+                if (dbMessage) {
+                  replyToMessageContent = dbMessage.content;
+                  replyToSenderName = replyToSenderName || dbMessage.senderName;
+                } else {
+                  logger.warn(
+                    { threadMessageId, chatJid },
+                    'Reply context: DB lookup failed - quoted message not found',
+                  );
+                }
+              }
+            }
+
             const rawSender = msg.key.participant || msg.key.remoteJid || '';
             const sender = await this.translateJid(rawSender);
             const senderName = msg.pushName || sender.split('@')[0];
@@ -492,6 +549,7 @@ export class WhatsAppChannel implements Channel {
                 id: messageId,
                 remoteJid: chatJid,
                 participant: msg.key.participant || undefined,
+                senderName,
                 content,
                 fromMe,
               });
@@ -517,6 +575,9 @@ export class WhatsAppChannel implements Channel {
               is_from_me: fromMe,
               is_bot_message: isBotMessage,
               thread_message_id: threadMessageId,
+              reply_to_message_id: threadMessageId,
+              reply_to_message_content: replyToMessageContent,
+              reply_to_sender_name: replyToSenderName,
             });
           }
         } catch (err) {
