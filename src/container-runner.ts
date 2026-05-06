@@ -297,7 +297,7 @@ function buildVolumeMounts(
 
   // Shared inter-agent directory (read-write for all groups)
   // Used for cross-agent queues, flags, and shared state
-  const sharedDir = path.join(projectRoot, 'shared');
+  const sharedDir = path.join(process.env.HOME || '/root', 'Shared');
   fs.mkdirSync(sharedDir, { recursive: true });
   mounts.push({
     hostPath: sharedDir,
