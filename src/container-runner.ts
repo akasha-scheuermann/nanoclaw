@@ -33,13 +33,7 @@ import { RegisteredGroup } from './types.js';
 const onecli = new OneCLI({ url: ONECLI_URL });
 
 // In-container MCP server env vars — read from .env and forwarded to containers
-const mcpEnvKeys = [
-  'PLEX_TOKEN',
-  'PLEX_URL',
-  'PLEX_BLOCKED_TOOLS',
-  'FASTMAIL_API_TOKEN',
-  'FASTMAIL_BLOCKED_TOOLS',
-] as const;
+const mcpEnvKeys = ['FASTMAIL_API_TOKEN', 'FASTMAIL_BLOCKED_TOOLS'] as const;
 const mcpEnvConfig = readEnvFile([...mcpEnvKeys]);
 
 // MCP tool allowlist — read from .env (not process.env, which is intentionally clean)
@@ -621,7 +615,18 @@ export async function runContainerAgent(
             resetTimeout();
             // Call onOutput for all markers (including null results)
             // so idle timers start even for "silent" query completions.
-            outputChain = outputChain.then(() => onOutput(parsed));
+            // Catch errors here (e.g. a failed channel send): a failing
+            // handler must not poison the chain or surface as an unhandled
+            // rejection — that would crash the whole process and never
+            // resolve runAgent. Log and continue instead.
+            outputChain = outputChain.then(() =>
+              onOutput(parsed).catch((err) => {
+                logger.error(
+                  { group: group.name, error: err },
+                  'onOutput handler failed (continuing)',
+                );
+              }),
+            );
           } catch (err) {
             logger.warn(
               { group: group.name, error: err },

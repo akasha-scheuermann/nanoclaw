@@ -34,7 +34,7 @@ RUN apt-get update && apt-get install -y \
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 
-# Install uv (Python package runner — used by plex-mcp-server and other Python MCP servers)
+# Install uv (Python package runner — used by Python-based MCP servers)
 RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
 
 # Install bun (required by fastmail-mcp-server which is a TypeScript-first package)

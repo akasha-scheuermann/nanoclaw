@@ -92,7 +92,6 @@ function getBlockedMcpTools(): string[] {
   const blocked: string[] = [];
   const servers: Record<string, string> = {
     FASTMAIL_BLOCKED_TOOLS: 'fastmail',
-    PLEX_BLOCKED_TOOLS: 'plex',
   };
   for (const [envVar, serverName] of Object.entries(servers)) {
     const value = process.env[envVar];
@@ -661,23 +660,6 @@ async function runQuery(
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
           },
         },
-        // Plex MCP server (uvx) — enabled when PLEX_TOKEN and PLEX_URL are set
-        ...(process.env.PLEX_TOKEN && process.env.PLEX_URL
-          ? {
-              plex: {
-                command: 'uvx',
-                args: [
-                  'plex-mcp-server',
-                  '--transport',
-                  'stdio',
-                  '--plex-url',
-                  process.env.PLEX_URL,
-                  '--plex-token',
-                  process.env.PLEX_TOKEN,
-                ],
-              },
-            }
-          : {}),
         // Fastmail MCP server — enabled when FASTMAIL_API_TOKEN is set
         ...(process.env.FASTMAIL_API_TOKEN
           ? {

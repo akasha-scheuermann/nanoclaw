@@ -29,10 +29,3 @@ UPDATE registered_groups SET container_config = json_set(
   '$.allowedMcpTools',
   json('["mcp__fastmail__*"]')
 ) WHERE folder = 'whatsapp_inbox';
-
--- Entertainment: only agent with Plex access
-UPDATE registered_groups SET container_config = json_set(
-  COALESCE(container_config, '{}'),
-  '$.allowedMcpTools',
-  json('["mcp__plex__*"]')
-) WHERE folder = 'whatsapp_entertainment';
