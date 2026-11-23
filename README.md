@@ -1,3 +1,5 @@
+> **Archived 2026-11.** This was my personal fork of [NanoClaw](https://github.com/nanocoai/nanoclaw), which ran my agents from March to November 2026. It has been replaced by a private system (akasha-scheuermann/akasha). I'm not taking issues or pull requests here; for NanoClaw itself, use the upstream repo. Kept for reference.
+
 <p align="center">
   <img src="assets/nanoclaw-logo.png" alt="NanoClaw" width="400">
 </p>
